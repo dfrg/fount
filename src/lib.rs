@@ -1,5 +1,10 @@
 #![allow(dead_code, unused_variables)]
 
+#[cfg(target_os = "macos")]
+#[path = "platform/macos.rs"]
+mod platform;
+
+#[cfg(not(target_os = "macos"))]
 #[path = "platform/windows.rs"]
 mod platform;
 

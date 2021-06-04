@@ -1,27 +1,49 @@
 /// Quick and cheesy itemization example to test fallback font selection
 /// by script.
-
 use fount::*;
+use std::collections::HashMap;
+use std::sync::Arc;
+use swash::proxy::CharmapProxy;
 use swash::text::{Codepoint as _, Script};
+use swash::{CacheKey, FontRef};
 
 fn main() {
     let fcx = FontContext::new(&FontLibrary::default());
+    let mut cache = FontCache::default();
     let text = std::env::args_os()
         .skip(1)
         .map(|arg| arg.to_string_lossy().to_string())
         .collect::<Vec<_>>()
         .join(" ");
-    print_items(&text, None, &fcx);
+    print_items(&text, None, &fcx, &mut cache);
 }
 
-fn print_items(s: &str, locale: Option<Locale>, fcx: &FontContext) {
+fn print_items(s: &str, locale: Option<Locale>, fcx: &FontContext, cache: &mut FontCache) {
     let items = itemize(s, locale, fcx);
     for (i, item) in items.iter().enumerate() {
         println!("{}: {}: {:?}\n  {:?}", i, &item.1, &item.2, &item.0);
+        let glyph_ids = fcx
+            .family_by_name(&item.2[0])
+            .map(|family| cache.get(fcx, family.id()))
+            .flatten()
+            .map(|font| {
+                item.0
+                    .chars()
+                    .map(|ch| font.map_char(ch))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or(Vec::new());
+        if !glyph_ids.is_empty() {
+            println!("  {:?}", &glyph_ids);
+        }
     }
 }
 
-fn itemize(s: &str, locale: Option<Locale>, fcx: &FontContext) -> Vec<(String, String, Vec<String>)> {
+fn itemize(
+    s: &str,
+    locale: Option<Locale>,
+    fcx: &FontContext,
+) -> Vec<(String, String, Vec<String>)> {
     let mut items = Vec::new();
     let mut run = String::default();
     let mut last_script = s
@@ -109,4 +131,68 @@ fn flush_run(
 
 fn real_script(script: Script) -> bool {
     script != Script::Common && script != Script::Unknown && script != Script::Inherited
+}
+
+struct Font {
+    data: Arc<Vec<u8>>,
+    offset: u32,
+    key: CacheKey,
+    charmap: CharmapProxy,
+}
+
+impl Font {
+    fn map_char(&self, ch: char) -> u16 {
+        self.charmap.materialize(&self.as_ref()).map(ch)
+    }
+
+    fn as_ref(&self) -> FontRef {
+        FontRef {
+            data: &self.data,
+            offset: self.offset,
+            key: self.key,
+        }
+    }
+}
+
+#[derive(Default)]
+struct FontCache {
+    sources: HashMap<FontSourceId, Arc<Vec<u8>>>,
+}
+
+impl FontCache {
+    fn get(&mut self, fcx: &FontContext, family: FontFamilyId) -> Option<Font> {
+        let font_entry = fcx
+            .family(family)?
+            .fonts()
+            .filter_map(|fid| fcx.font(fid))
+            .find(|f| f.attributes() == Default::default())?;
+        let source_id = font_entry.source();
+        let index = font_entry.index();
+        if let Some(data) = self.sources.get(&source_id) {
+            let font_ref = FontRef::from_index(&data, index as usize)?;
+            return Some(Font {
+                data: data.clone(),
+                offset: font_ref.offset,
+                key: font_ref.key,
+                charmap: CharmapProxy::from_font(&font_ref),
+            });
+        }
+        let source = fcx.source(source_id)?;
+        match source.kind() {
+            FontSourceKind::FileName(name) => {
+                let mut path = fcx.source_paths().next()?.to_owned();
+                path.push_str(name);
+                let data = Arc::new(std::fs::read(&path).ok()?);
+                self.sources.insert(source_id, data.clone());
+                let font_ref = FontRef::from_index(&data, index as usize)?;
+                return Some(Font {
+                    data: data.clone(),
+                    offset: font_ref.offset,
+                    key: font_ref.key,
+                    charmap: CharmapProxy::from_font(&font_ref),
+                });
+            }
+            _ => return None,
+        }
+    }
 }
