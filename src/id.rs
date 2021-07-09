@@ -1,18 +1,18 @@
 /// Identifier for a family in a font library.
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
-pub struct FontFamilyId(pub(crate) u32);
+pub struct FamilyId(pub(crate) u32);
 
 /// Identifier for a font in a font library.
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
 pub struct FontId(pub(crate) u32);
 
-/// Identifier for a source in a font collection.
+/// Identifier for a source in a font library.
 ///
 /// This corresponds to a file name which can be combined with
 /// [`SourcePaths`](super::SourcePaths) to locate a font file, a full
 /// path to a font file, or a user registered buffer containing font data.
 #[derive(Copy, Clone, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
-pub struct FontSourceId(pub(crate) u32);
+pub struct SourceId(pub(crate) u32);
 
 const INDEX_MASK: u32 = 0x7FFFFFFF;
 const USER_BIT: u32 = 0x80000000;
@@ -52,6 +52,6 @@ macro_rules! impl_id {
     };
 }
 
-impl_id!(FontFamilyId);
+impl_id!(FamilyId);
 impl_id!(FontId);
-impl_id!(FontSourceId);
+impl_id!(SourceId);

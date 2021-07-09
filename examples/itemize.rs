@@ -2,13 +2,12 @@
 /// by script.
 use fount::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 use swash::proxy::CharmapProxy;
 use swash::text::{Codepoint as _, Script};
-use swash::{CacheKey, FontRef};
+use swash::{Attributes, CacheKey, FontRef};
 
 fn main() {
-    let fcx = FontContext::new(&FontLibrary::default());
+    let fcx = FontContext::new(&Library::default());
     let mut cache = FontCache::default();
     let text = std::env::args_os()
         .skip(1)
@@ -91,7 +90,7 @@ fn itemize(
                     }
                 }
                 let family_names = fcx
-                    .generic_families(GenericFontFamily::Emoji)
+                    .generic_families(GenericFamily::Emoji)
                     .iter()
                     .filter_map(|id| fcx.family(*id))
                     .map(|family| family.name().to_owned())
@@ -134,7 +133,7 @@ fn real_script(script: Script) -> bool {
 }
 
 struct Font {
-    data: Arc<Vec<u8>>,
+    data: FontData,
     offset: u32,
     key: CacheKey,
     charmap: CharmapProxy,
@@ -156,16 +155,12 @@ impl Font {
 
 #[derive(Default)]
 struct FontCache {
-    sources: HashMap<FontSourceId, Arc<Vec<u8>>>,
+    sources: HashMap<SourceId, FontData>,
 }
 
 impl FontCache {
-    fn get(&mut self, fcx: &FontContext, family: FontFamilyId) -> Option<Font> {
-        let font_entry = fcx
-            .family(family)?
-            .fonts()
-            .filter_map(|fid| fcx.font(fid))
-            .find(|f| f.attributes() == Default::default())?;
+    fn get(&mut self, fcx: &FontContext, family: FamilyId) -> Option<Font> {
+        let font_entry = fcx.font(fcx.family(family)?.query(Attributes::default())?)?;
         let source_id = font_entry.source();
         let index = font_entry.index();
         if let Some(data) = self.sources.get(&source_id) {
@@ -173,26 +168,18 @@ impl FontCache {
             return Some(Font {
                 data: data.clone(),
                 offset: font_ref.offset,
-                key: font_ref.key,
+                key: font_entry.cache_key(),
                 charmap: CharmapProxy::from_font(&font_ref),
             });
         }
-        let source = fcx.source(source_id)?;
-        match source.kind() {
-            FontSourceKind::FileName(name) => {
-                let mut path = fcx.source_paths().next()?.to_owned();
-                path.push_str(name);
-                let data = Arc::new(std::fs::read(&path).ok()?);
-                self.sources.insert(source_id, data.clone());
-                let font_ref = FontRef::from_index(&data, index as usize)?;
-                return Some(Font {
-                    data: data.clone(),
-                    offset: font_ref.offset,
-                    key: font_ref.key,
-                    charmap: CharmapProxy::from_font(&font_ref),
-                });
-            }
-            _ => return None,
-        }
+        let data = fcx.load(source_id)?;
+        self.sources.insert(source_id, data.clone());
+        let font_ref = FontRef::from_index(&data, index as usize)?;
+        Some(Font {
+            data: data.clone(),
+            offset: font_ref.offset,
+            key: font_entry.cache_key(),
+            charmap: CharmapProxy::from_font(&font_ref),
+        })
     }
 }

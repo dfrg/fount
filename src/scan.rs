@@ -2,7 +2,7 @@ use super::data::*;
 use super::id::*;
 use super::Registration;
 use swash::{Attributes, CacheKey, FontDataRef, FontRef, Stretch, StringId};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 #[derive(Default)]
 pub struct ScannedFont {
@@ -10,6 +10,7 @@ pub struct ScannedFont {
     pub lowercase_name: String,
     pub index: u32,
     pub attributes: Attributes,
+    pub cache_key: CacheKey,
 }
 
 #[derive(Default)]
@@ -19,7 +20,7 @@ pub struct FontScanner {
 }
 
 impl FontScanner {
-    pub fn scan(&mut self, data: &[u8], mut f: impl FnMut(&ScannedFont, CacheKey)) {
+    pub fn scan(&mut self, data: &[u8], mut f: impl FnMut(&ScannedFont)) {
         if let Some(font_data) = FontDataRef::new(data) {
             let len = font_data.len();
             for i in 0..len {
@@ -30,7 +31,7 @@ impl FontScanner {
         }        
     }
 
-    fn scan_font(&mut self, font: &FontRef, index: u32, f: &mut impl FnMut(&ScannedFont, CacheKey)) -> Option<()> {
+    fn scan_font(&mut self, font: &FontRef, index: u32, f: &mut impl FnMut(&ScannedFont)) -> Option<()> {
         self.font.name.clear();
         self.font.lowercase_name.clear();
         self.font.index = index;
@@ -79,18 +80,19 @@ impl FontScanner {
         }
         self.font.lowercase_name.extend(self.font.name.chars().map(|ch| ch.to_lowercase()).flatten());
         self.font.attributes = font.attributes();
-        f(&self.font, font.key);
+        self.font.cache_key = font.key;
+        f(&self.font);
         Some(())
     }
 }
 
 impl CollectionData {
-    pub fn add_fonts(&mut self, scanner: &mut FontScanner, data: Arc<Vec<u8>>, mut reg: Option<&mut Registration>) -> Option<u32> {
+    pub fn add_fonts(&mut self, scanner: &mut FontScanner, data: super::font::FontData, mut reg: Option<&mut Registration>) -> Option<u32> {
         let is_user = self.is_user;
-        let source_id = FontSourceId::alloc(self.sources.len(), is_user)?;
+        let source_id = SourceId::alloc(self.sources.len(), is_user)?;
         let mut added_source = false;
         let mut count = 0;
-        scanner.scan(&*data, |font, cache_key| {
+        scanner.scan(&*data, |font| {
             let font_id = if let Some(font_id) = FontId::alloc(self.fonts.len(), is_user) {
                 font_id
             } else {
@@ -99,7 +101,7 @@ impl CollectionData {
             let family_id = if let Some(family_id) = self.family_map.get(font.lowercase_name.as_str()) {
                 *family_id
             } else {
-                if let Some(family_id) = FontFamilyId::alloc(self.families.len(), is_user) {
+                if let Some(family_id) = FamilyId::alloc(self.families.len(), is_user) {
                     let family = FamilyData {
                         name: font.name.as_str().into(),
                         has_stretch: false,
@@ -120,7 +122,10 @@ impl CollectionData {
                 }
             }
             if !added_source {
-                self.sources.push(SourceData::Data(data.clone()));
+                self.sources.push(SourceData {
+                    kind: SourceDataKind::Data(data.clone()),
+                    status: RwLock::new(SourceDataStatus::Vacant),
+                });
                 added_source = true;
             }
             if stretch != Stretch::NORMAL {
@@ -140,7 +145,7 @@ impl CollectionData {
                 source: source_id,
                 index: font.index,
                 attributes: font.attributes,
-                cache_key,
+                cache_key: font.cache_key,
             });
             count += 1;
         });

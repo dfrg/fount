@@ -10,26 +10,28 @@ mod platform;
 
 mod context;
 mod data;
+mod font;
 mod id;
 mod library;
-mod locale;
 mod scan;
 mod script_tags;
 
 pub use context::FontContext;
 pub use data::SourcePaths;
-pub use id::{FontFamilyId, FontId, FontSourceId};
-pub use library::FontLibrary;
-pub use locale::Locale;
+pub use font::FontData;
+pub use id::{FamilyId, FontId, SourceId};
+pub use library::{Library, LibraryBuilder};
+
+pub use swash::text::Language as Locale;
 
 use data::*;
 use std::sync::Arc;
-use swash::{Attributes, Stretch, Style, Weight};
+use swash::{Attributes, CacheKey, Stretch, Style, Weight};
 
 /// Describes a generic font family.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum GenericFontFamily {
+pub enum GenericFamily {
     Serif,
     SansSerif,
     Monospace,
@@ -40,14 +42,15 @@ pub enum GenericFontFamily {
 
 /// Entry for a font family in a font library.
 #[derive(Clone)]
-pub struct FontFamily {
-    id: FontFamilyId,
+pub struct FamilyEntry {
+    id: FamilyId,
+    has_stretch: bool,
     kind: FontFamilyKind,
 }
 
-impl FontFamily {
+impl FamilyEntry {
     /// Returns the identifier for the font family.
-    pub fn id(&self) -> FontFamilyId {
+    pub fn id(&self) -> FamilyId {
         self.id
     }
 
@@ -61,11 +64,175 @@ impl FontFamily {
 
     /// Returns an iterator over the fonts that are members of the family.
     pub fn fonts<'a>(&'a self) -> impl Iterator<Item = FontId> + Clone + 'a {
+        self.fonts_with_attrs().map(|font| font.0)
+    }
+
+    /// Returns the font that most closely matches the specified attributes.
+    pub fn query(&self, attributes: Attributes) -> Option<FontId> {
+        let style = attributes.style();
+        let weight = attributes.weight();
+        let stretch = attributes.stretch();
+        let mut min_stretch_dist = i32::MAX;
+        let mut matching_stretch = Stretch::NORMAL;
+        if self.has_stretch {
+            if stretch <= Stretch::NORMAL {
+                for font in self.fonts_with_attrs() {
+                    let val = font.1;
+                    let font_stretch = if val > Stretch::NORMAL {
+                        val.raw() as i32 - Stretch::NORMAL.raw() as i32
+                            + Stretch::ULTRA_EXPANDED.raw() as i32
+                    } else {
+                        val.raw() as i32
+                    };
+                    let offset = (font_stretch - stretch.raw() as i32).abs();
+                    if offset < min_stretch_dist {
+                        min_stretch_dist = offset;
+                        matching_stretch = val;
+                    }
+                }
+            } else {
+                for font in self.fonts_with_attrs() {
+                    let val = font.1;
+                    let font_stretch = if val < Stretch::NORMAL {
+                        val.raw() as i32 - Stretch::NORMAL.raw() as i32
+                            + Stretch::ULTRA_EXPANDED.raw() as i32
+                    } else {
+                        val.raw() as i32
+                    };
+                    let offset = (font_stretch - stretch.raw() as i32).abs();
+                    if offset < min_stretch_dist {
+                        min_stretch_dist = offset;
+                        matching_stretch = val;
+                    }
+                }
+            }
+        }
+        let mut matching_style;
+        match style {
+            Style::Normal => {
+                matching_style = Style::Italic;
+                for font in self.fonts_with_attrs().filter(|f| f.1 == matching_stretch) {
+                    let val = font.3;
+                    match val {
+                        Style::Normal => {
+                            matching_style = style;
+                            break;
+                        }
+                        Style::Oblique(_) => {
+                            matching_style = val;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Style::Oblique(_) => {
+                matching_style = Style::Normal;
+                for font in self.fonts_with_attrs().filter(|f| f.1 == matching_stretch) {
+                    let val = font.3;
+                    match val {
+                        Style::Oblique(_) => {
+                            matching_style = style;
+                            break;
+                        }
+                        Style::Italic => {
+                            matching_style = val;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Style::Italic => {
+                matching_style = Style::Normal;
+                for font in self.fonts_with_attrs().filter(|f| f.1 == matching_stretch) {
+                    let val = font.3;
+                    match val {
+                        Style::Italic => {
+                            matching_style = style;
+                            break;
+                        }
+                        Style::Oblique(_) => {
+                            matching_style = val;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        // If the desired weight is inclusively between 400 and 500
+        if weight >= Weight(400) && weight <= Weight(500) {
+            // weights greater than or equal to the target weight are checked
+            // in ascending order until 500 is hit and checked
+            for font in self.fonts_with_attrs().filter(|f| {
+                f.1 == matching_stretch
+                    && f.3 == matching_style
+                    && f.2 >= weight
+                    && f.2 <= Weight(500)
+            }) {
+                return Some(font.0);
+            }
+            // followed by weights less than the target weight in descending
+            // order
+            for font in self
+                .fonts_with_attrs()
+                .rev()
+                .filter(|f| f.1 == matching_stretch && f.3 == matching_style && f.2 < weight)
+            {
+                return Some(font.0);
+            }
+            // followed by weights greater than 500, until a match is found
+            return self
+                .fonts_with_attrs()
+                .filter(|f| f.1 == matching_stretch && f.3 == matching_style && f.2 > Weight(500))
+                .map(|f| f.0)
+                .next();
+        // If the desired weight is less than 400
+        } else if weight < Weight(400) {
+            // weights less than or equal to the desired weight are checked in
+            // descending order
+            for font in self
+                .fonts_with_attrs()
+                .rev()
+                .filter(|f| f.1 == matching_stretch && f.3 == matching_style && f.2 <= weight)
+            {
+                return Some(font.0);
+            }
+            // followed by weights above the desired weight in ascending order
+            // until a match is found
+            return self
+                .fonts_with_attrs()
+                .filter(|f| f.1 == matching_stretch && f.3 == matching_style && f.2 > weight)
+                .map(|f| f.0)
+                .next();
+        // If the desired weight is greater than 500
+        } else {
+            // weights greater than or equal to the desired weight are checked
+            // in ascending order
+            for font in self
+                .fonts_with_attrs()
+                .filter(|f| f.1 == matching_stretch && f.3 == matching_style && f.2 >= weight)
+            {
+                return Some(font.0);
+            }
+            // followed by weights below the desired weight in descending order
+            // until a match is found
+            return self
+                .fonts_with_attrs()
+                .rev()
+                .filter(|f| f.1 == matching_stretch && f.3 == matching_style && f.2 < weight)
+                .map(|f| f.0)
+                .next();
+        }
+    }
+
+    fn fonts_with_attrs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = &(FontId, Stretch, Weight, Style)> + DoubleEndedIterator + Clone + 'a
+    {
         let fonts = match &self.kind {
             FontFamilyKind::Static(_, fonts) => *fonts,
             FontFamilyKind::Dynamic(data) => &data.fonts,
         };
-        fonts.iter().map(|font| font.0)
+        fonts.iter()
     }
 }
 
@@ -79,13 +246,13 @@ enum FontFamilyKind {
 #[derive(Clone)]
 pub struct Families {
     user: Arc<(u64, CollectionData)>,
-    library: FontLibrary,
+    library: Library,
     pos: usize,
     stage: u8,
 }
 
 impl Iterator for Families {
-    type Item = FontFamily;
+    type Item = FamilyEntry;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -97,39 +264,40 @@ impl Iterator for Families {
                 }
                 let pos = self.pos;
                 self.pos += 1;
-                return self.user.1.family(FontFamilyId::new_user(pos as u32));
+                return self.user.1.family(FamilyId::new_user(pos as u32));
             } else {
                 let pos = self.pos;
                 self.pos += 1;
-                return self.library.inner.system.family(FontFamilyId::new(pos as u32));
-            }    
+                return self.library.inner.system.family(FamilyId::new(pos as u32));
+            }
         }
     }
 }
 
 /// Entry for a font in a font library.
 #[derive(Copy, Clone)]
-pub struct Font {
+pub struct FontEntry {
     id: FontId,
-    family: FontFamilyId,
-    source: FontSourceId,
+    family: FamilyId,
+    source: SourceId,
     index: u32,
     attributes: Attributes,
+    cache_key: CacheKey,
 }
 
-impl Font {
+impl FontEntry {
     /// Returns the identifier for the font.
     pub fn id(&self) -> FontId {
         self.id
     }
 
     /// Returns the identifier for the family that contains the font.
-    pub fn family(&self) -> FontFamilyId {
+    pub fn family(&self) -> FamilyId {
         self.family
     }
 
     /// Returns the identifier for the source that contains the font.
-    pub fn source(&self) -> FontSourceId {
+    pub fn source(&self) -> SourceId {
         self.source
     }
 
@@ -142,43 +310,48 @@ impl Font {
     pub fn attributes(&self) -> Attributes {
         self.attributes
     }
+
+    /// Returns the cache key for the font.
+    pub fn cache_key(&self) -> CacheKey {
+        self.cache_key
+    }
 }
 
 /// Entry for a font source in a font library.
 #[derive(Clone)]
-pub struct FontSource {
-    id: FontSourceId,
-    kind: FontSourceKind,
+pub struct SourceEntry {
+    id: SourceId,
+    kind: SourceKind,
 }
 
-impl FontSource {
+impl SourceEntry {
     /// Returns the identifier for the font source.
-    pub fn id(&self) -> FontSourceId {
+    pub fn id(&self) -> SourceId {
         self.id
     }
 
     /// Returns the kind of the font source.
-    pub fn kind(&self) -> &FontSourceKind {
+    pub fn kind(&self) -> &SourceKind {
         &self.kind
     }
 }
 
 /// The kind of a font source.
 #[derive(Clone)]
-pub enum FontSourceKind {
+pub enum SourceKind {
     /// File name of the source. Pair with [`SourcePaths`] to locate the file.
     FileName(&'static str),
     /// Full path to a font file.
     Path(Arc<str>),
     /// Shared buffer containing font data.
-    Data(Arc<Vec<u8>>),
+    Data(FontData),
 }
 
 /// Context that describes the result of font registration.
 #[derive(Clone, Default)]
 pub struct Registration {
     /// List of font families that were registered.
-    pub families: Vec<FontFamilyId>,
+    pub families: Vec<FamilyId>,
     /// List of fonts that were registered.
-    pub fonts: Vec<FontId>,  
+    pub fonts: Vec<FontId>,
 }

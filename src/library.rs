@@ -9,17 +9,19 @@ use std::sync::{Arc, RwLock};
 /// Accessing the collection is done by creating a [`FontContext`](super::context::FontContext)
 /// wrapping this struct.
 #[derive(Clone)]
-pub struct FontLibrary {
+pub struct Library {
     pub(crate) inner: Arc<Inner>,
 }
 
-impl Default for FontLibrary {
+impl Default for Library {
     fn default() -> Self {
         let mut user = CollectionData::default();
         user.is_user = true;
         Self {
             inner: Arc::new(Inner {
-                system: SystemCollectionData::Static(&super::platform::STATIC_DATA),
+                system: SystemCollectionData::Static(StaticCollection::new(
+                    &super::platform::STATIC_DATA,
+                )),
                 user: Arc::new(RwLock::new(user)),
                 user_version: Arc::new(AtomicU64::new(0)),
             }),
@@ -32,3 +34,7 @@ pub struct Inner {
     pub user: Arc<RwLock<CollectionData>>,
     pub user_version: Arc<AtomicU64>,
 }
+
+/// Builder for configuring a font library.
+#[derive(Default)]
+pub struct LibraryBuilder {}
