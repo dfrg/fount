@@ -9,6 +9,7 @@ use std::sync::Arc;
 use swash::text::Script;
 
 /// Interface to a font library providing enumeration, queries and fallbacks.
+#[derive(Clone)]
 pub struct FontContext {
     library: Library,
     user: RefCell<Arc<(u64, CollectionData)>>,
