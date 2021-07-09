@@ -32,12 +32,12 @@ use swash::{Attributes, CacheKey, Stretch, Style, Weight};
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum GenericFamily {
-    Serif,
-    SansSerif,
-    Monospace,
-    SystemUI,
-    Cursive,
-    Emoji,
+    Serif = 0,
+    SansSerif = 1,
+    Monospace = 2,
+    SystemUI = 3,
+    Cursive = 4,
+    Emoji = 5,
 }
 
 /// Entry for a font family in a font library.
