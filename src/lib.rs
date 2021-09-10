@@ -28,6 +28,8 @@ use data::*;
 use std::sync::Arc;
 use swash::{Attributes, CacheKey, Stretch, Style, Weight};
 
+use core::fmt;
+
 /// Describes a generic font family.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -35,9 +37,47 @@ pub enum GenericFamily {
     Serif = 0,
     SansSerif = 1,
     Monospace = 2,
-    SystemUI = 3,
+    SystemUi = 3,
     Cursive = 4,
     Emoji = 5,
+}
+
+impl GenericFamily {
+    /// Parses a generic family from a CSS generic family name.
+    ///
+    /// # Example
+    /// ```
+    /// use font_types::GenericFamily;
+    ///
+    /// assert_eq!(GenericFamily::parse("sans-serif"), Some(GenericFamily::SansSerif));
+    /// assert_eq!(GenericFamily::parse("Arial"), None);
+    /// ```
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim();
+        Some(match s {
+            "serif" => Self::Serif,
+            "sans-serif" => Self::SansSerif,
+            "monospace" => Self::Monospace,
+            "cursive" => Self::Cursive,
+            "system-ui" => Self::SystemUi,
+            "emoji" => Self::Emoji,
+            _ => return None,
+        })
+    }
+}
+
+impl fmt::Display for GenericFamily {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self {
+            Self::Serif => "serif",
+            Self::SansSerif => "sans-serif",
+            Self::Monospace => "monospace",
+            Self::Cursive => "cursive",
+            Self::SystemUi => "system-ui",
+            Self::Emoji => "emoji",
+        };
+        write!(f, "{}", name)
+    }
 }
 
 /// Entry for a font family in a font library.
