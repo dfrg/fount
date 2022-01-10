@@ -124,7 +124,7 @@ impl FontContext {
         let mut collection = self.library.inner.user.write().unwrap();
         let mut reg = Registration::default();
         let count = collection
-            .add_fonts(&mut scanner, FontData::new(data), Some(&mut reg))
+            .add_fonts(&mut scanner, FontData::new(data), Some(&mut reg), None)
             .unwrap_or(0);
         if count != 0 {
             self.library

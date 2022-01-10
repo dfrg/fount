@@ -1,7 +1,11 @@
 use super::data::*;
 use super::id::*;
-use super::Registration;
+use super::{GenericFamily, Registration};
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
+use std::{fs, io};
+use swash::text::{Cjk, Script};
 use swash::{Attributes, CacheKey, FontDataRef, FontRef, Stretch, StringId};
 
 #[derive(Default)]
@@ -11,6 +15,7 @@ pub struct ScannedFont {
     pub index: u32,
     pub attributes: Attributes,
     pub cache_key: CacheKey,
+    pub scripts: HashSet<(Script, Cjk)>,
 }
 
 #[derive(Default)]
@@ -41,6 +46,7 @@ impl FontScanner {
         self.font.lowercase_name.clear();
         self.font.index = index;
         self.font.attributes = Attributes::default();
+        self.font.scripts.clear();
         self.name.clear();
         let strings = font.localized_strings();
         let is_var = font.variations().len() != 0;
@@ -88,6 +94,14 @@ impl FontScanner {
             .extend(self.font.name.chars().map(|ch| ch.to_lowercase()).flatten());
         self.font.attributes = font.attributes();
         self.font.cache_key = font.key;
+        for ws in font.writing_systems() {
+            let script = match (ws.script(), ws.language()) {
+                (Some(Script::Han), Some(lang)) => (Script::Han, lang.cjk()),
+                (Some(script), _) => (script, Cjk::None),
+                (_, _) => continue,
+            };
+            self.font.scripts.insert(script);
+        }
         f(&self.font);
         Some(())
     }
@@ -99,6 +113,7 @@ impl CollectionData {
         scanner: &mut FontScanner,
         data: super::font::FontData,
         mut reg: Option<&mut Registration>,
+        mut fallback: Option<&mut FallbackData>,
     ) -> Option<u32> {
         let is_user = self.is_user;
         let source_id = SourceId::alloc(self.sources.len(), is_user)?;
@@ -156,6 +171,61 @@ impl CollectionData {
                 }
                 reg.fonts.push(font_id);
             }
+            if let Some(fallback) = fallback.as_mut() {
+                for (script, cjk) in &font.scripts {
+                    if *script == Script::Han {
+                        let entry = &mut fallback.cjk_families[*cjk as usize];
+                        if !entry.contains(&family_id) {
+                            entry.push(family_id);
+                        }
+                    } else {
+                        let tag = crate::script_tags::script_tag(*script);
+                        let entry = fallback
+                            .script_fallbacks
+                            .entry(tag)
+                            .or_default();
+                        if !entry.contains(&family_id) {
+                            entry.push(family_id);
+                        }
+                    }
+                }
+                if font.lowercase_name.contains("serif") {
+                    let entry = &mut fallback.generic_families[GenericFamily::Serif as usize];
+                    if !entry.contains(&family_id) {
+                        entry.push(family_id);
+                    }
+                }
+                if font.lowercase_name.contains("sans") {
+                    let entry = &mut fallback.generic_families[GenericFamily::SansSerif as usize];
+                    if !entry.contains(&family_id) {
+                        entry.push(family_id);
+                    }
+                }
+                if font.lowercase_name.contains("mono") {
+                    let entry = &mut fallback.generic_families[GenericFamily::Monospace as usize];
+                    if !entry.contains(&family_id) {
+                        entry.push(family_id);
+                    }
+                }
+                if font.lowercase_name.contains("ui") {
+                    let entry = &mut fallback.generic_families[GenericFamily::SystemUi as usize];
+                    if !entry.contains(&family_id) {
+                        entry.push(family_id);
+                    }
+                }
+                if font.lowercase_name.contains("cursive") {
+                    let entry = &mut fallback.generic_families[GenericFamily::Cursive as usize];
+                    if !entry.contains(&family_id) {
+                        entry.push(family_id);
+                    }
+                }
+                if font.lowercase_name.contains("emoji") {
+                    let entry = &mut fallback.generic_families[GenericFamily::Emoji as usize];
+                    if !entry.contains(&family_id) {
+                        entry.push(family_id);
+                    }
+                }
+            }
             self.fonts.push(FontData {
                 family: family_id,
                 source: source_id,
@@ -167,4 +237,24 @@ impl CollectionData {
         });
         Some(count)
     }
+}
+
+pub(crate) fn scan_path(
+    path: &Path,
+    scanner: &mut FontScanner,
+    collection: &mut CollectionData,
+    fallback: &mut FallbackData,
+) -> Result<(), io::Error> {
+    let path = std::fs::canonicalize(path)?;
+    if path.is_file() {
+        let data = crate::font::FontData::from_file(&path)?;
+        collection.add_fonts(scanner, data, None, Some(fallback));
+    } else {
+        for entry in fs::read_dir(&path)? {
+            let entry = entry?;
+            let path = entry.path();
+            scan_path(&path, scanner, collection, fallback)?;
+        }
+    }
+    Ok(())
 }

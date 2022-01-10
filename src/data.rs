@@ -133,7 +133,7 @@ impl CollectionData {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct FallbackData {
     pub default_families: Vec<FamilyId>,
     pub script_fallbacks: HashMap<[u8; 4], Vec<FamilyId>>,

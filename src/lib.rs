@@ -4,7 +4,7 @@
 #[path = "platform/macos.rs"]
 mod platform;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 #[path = "platform/windows.rs"]
 mod platform;
 
