@@ -116,12 +116,8 @@ impl CollectionData {
             inner: SourcePathsInner::Static(&[]),
             pos: 0,
         };
-        load_source(
-            paths,
-            path,
-            &source_data.status,
-        )
-    }    
+        load_source(paths, path, &source_data.status)
+    }
 
     pub fn clone_into(&self, other: &mut Self) {
         other.families.clear();
@@ -137,7 +133,7 @@ impl CollectionData {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct FallbackData {
     pub default_families: Vec<FamilyId>,
     pub script_fallbacks: HashMap<[u8; 4], Vec<FamilyId>>,

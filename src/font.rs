@@ -12,7 +12,7 @@ impl FontData {
     /// Creates font data from the specified bytes.
     pub fn new(data: Vec<u8>) -> Self {
         Self {
-            inner: Arc::new(FontDataInner::Memory(data))
+            inner: Arc::new(FontDataInner::Memory(data)),
         }
     }
 
@@ -21,7 +21,7 @@ impl FontData {
         let path = path.as_ref();
         let data = std::fs::read(path)?;
         Ok(Self {
-            inner: Arc::new(FontDataInner::Memory(data))
+            inner: Arc::new(FontDataInner::Memory(data)),
         })
     }
 
@@ -40,7 +40,7 @@ impl FontData {
     /// Returns the number of strong references to the data.
     pub fn strong_count(&self) -> usize {
         Arc::strong_count(&self.inner)
-    }    
+    }
 }
 
 impl std::ops::Deref for FontData {
@@ -74,7 +74,7 @@ impl FontDataInner {
 #[derive(Clone, Debug)]
 #[repr(transparent)]
 pub struct WeakFontData {
-    inner: Weak<FontDataInner>
+    inner: Weak<FontDataInner>,
 }
 
 impl WeakFontData {

@@ -1,3 +1,4 @@
+#![rustfmt::skip]
 use super::data::*;
 use super::id::*;
 use swash::{Stretch, Weight, Style, Attributes};
