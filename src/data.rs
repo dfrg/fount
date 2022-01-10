@@ -116,12 +116,8 @@ impl CollectionData {
             inner: SourcePathsInner::Static(&[]),
             pos: 0,
         };
-        load_source(
-            paths,
-            path,
-            &source_data.status,
-        )
-    }    
+        load_source(paths, path, &source_data.status)
+    }
 
     pub fn clone_into(&self, other: &mut Self) {
         other.families.clear();

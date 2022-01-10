@@ -1,3 +1,4 @@
+#![rustfmt::skip]
 use super::data::*;
 use super::id::*;
 use swash::{Stretch, Weight, Style, Attributes};
@@ -507,8 +508,3 @@ pub const STATIC_DATA: StaticCollectionData = StaticCollectionData {
     generic_families: [&[FamilyId(11), ], &[FamilyId(61), ], &[FamilyId(10), ], &[FamilyId(61), ], &[FamilyId(9), ], &[FamilyId(63), ], ],
     cjk_families: [&[FamilyId(40), FamilyId(69), FamilyId(70), ], &[FamilyId(32), FamilyId(45), ], &[FamilyId(40), FamilyId(69), FamilyId(70), ], &[FamilyId(85), FamilyId(40), FamilyId(69), FamilyId(70), ], &[FamilyId(28), FamilyId(40), FamilyId(69), FamilyId(70), ], ],
 };
-
-
-
-
-

@@ -95,7 +95,7 @@ impl FontContext {
             self.user.borrow().1.load(id)
         } else {
             self.library.inner.system.load(id)
-        }        
+        }
     }
 
     /// Returns an ordered sequence of font family identifers that represent
