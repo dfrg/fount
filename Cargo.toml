@@ -1,9 +1,2 @@
-[package]
-name = "fount"
-version = "0.1.0"
-authors = ["Chad Brokaw <cbrokaw@gmail.com>"]
-license = "MIT OR Apache-2.0"
-edition = "2018"
-
-[dependencies]
-swash = { git = "https://github.com/dfrg/swash" }
+[workspace]
+members = ["archived/fount"]

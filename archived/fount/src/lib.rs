@@ -2,10 +2,12 @@
 
 #[cfg(target_os = "macos")]
 #[path = "platform/macos.rs"]
+#[rustfmt::skip]
 mod platform;
 
 #[cfg(target_os = "windows")]
 #[path = "platform/windows.rs"]
+#[rustfmt::skip]
 mod platform;
 
 mod context;
