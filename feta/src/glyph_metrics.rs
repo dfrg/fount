@@ -1,6 +1,6 @@
 use read_fonts::{
-    tables::{hmtx::Hmtx, hvar::Hvar},
-    types::GlyphId,
+    tables::{hmtx::LongMetric, hvar::Hvar},
+    types::{BigEndian, GlyphId},
     TableProvider,
 };
 
@@ -10,7 +10,9 @@ use crate::NormalizedCoord;
 #[derive(Clone)]
 pub struct GlyphMetrics<'a> {
     scale: f32,
-    hmtx: Option<Hmtx<'a>>,
+    h_metrics: &'a [LongMetric],
+    default_advance_width: u16,
+    lsbs: &'a [BigEndian<i16>],
     hvar: Option<Hvar<'a>>,
     coords: &'a [NormalizedCoord],
 }
@@ -29,11 +31,21 @@ impl<'a> GlyphMetrics<'a> {
             .max(1);
         let size = size.abs();
         let scale = if size == 0.0 { 1.0 } else { size / upem as f32 };
-        let hmtx = font.hmtx().ok();
+        let (h_metrics, default_advance_width, lsbs) = font
+            .hmtx()
+            .map(|hmtx| {
+                let h_metrics = hmtx.h_metrics();
+                let default_advance_width = h_metrics.last().map(|m| m.advance.get()).unwrap_or(0);
+                let lsbs = hmtx.left_side_bearings();
+                (h_metrics, default_advance_width, lsbs)
+            })
+            .unwrap_or_default();
         let hvar = font.hvar().ok();
         Self {
             scale,
-            hmtx,
+            h_metrics,
+            default_advance_width,
+            lsbs,
             hvar,
             coords,
         }
@@ -42,20 +54,10 @@ impl<'a> GlyphMetrics<'a> {
     /// Returns the advance width for the specified glyph.
     pub fn advance_width(&self, glyph_id: GlyphId) -> f32 {
         let mut advance = self
-            .hmtx
-            .as_ref()
-            .map(|hmtx| {
-                let default_advance = hmtx
-                    .h_metrics()
-                    .last()
-                    .map(|metric| metric.advance())
-                    .unwrap_or(0);
-                hmtx.h_metrics()
-                    .get(glyph_id.to_u16() as usize)
-                    .map(|metric| metric.advance())
-                    .unwrap_or(default_advance) as i32
-            })
-            .unwrap_or(0);
+            .h_metrics
+            .get(glyph_id.to_u16() as usize)
+            .map(|metric| metric.advance())
+            .unwrap_or(self.default_advance_width) as i32;
         if let Some(hvar) = &self.hvar {
             advance += hvar
                 .advance_width_delta(glyph_id, self.coords)
@@ -70,20 +72,15 @@ impl<'a> GlyphMetrics<'a> {
     pub fn left_side_bearing(&self, glyph_id: GlyphId) -> f32 {
         let gid_index = glyph_id.to_u16() as usize;
         let mut lsb = self
-            .hmtx
-            .as_ref()
-            .map(|hmtx| {
-                hmtx.h_metrics()
-                    .get(gid_index)
-                    .map(|metric| metric.side_bearing())
-                    .unwrap_or_else(|| {
-                        hmtx.left_side_bearings()
-                            .get(gid_index.saturating_sub(hmtx.h_metrics().len()))
-                            .map(|lsb| lsb.get())
-                            .unwrap_or(0)
-                    }) as i32
-            })
-            .unwrap_or(0);
+            .h_metrics
+            .get(gid_index)
+            .map(|metric| metric.side_bearing())
+            .unwrap_or_else(|| {
+                self.lsbs
+                    .get(gid_index.saturating_sub(self.h_metrics.len()))
+                    .map(|lsb| lsb.get())
+                    .unwrap_or_default()
+            }) as i32;
         if let Some(hvar) = &self.hvar {
             lsb += hvar
                 .lsb_delta(glyph_id, self.coords)
