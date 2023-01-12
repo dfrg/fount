@@ -1,2 +1,2 @@
 [workspace]
-members = ["archived/fount"]
+members = ["archived/fount", "feta"]
