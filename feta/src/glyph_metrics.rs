@@ -9,7 +9,6 @@ use crate::NormalizedCoord;
 /// Glyph specified metrics.
 #[derive(Clone)]
 pub struct GlyphMetrics<'a> {
-    upem: u16,
     scale: f32,
     hmtx: Option<Hmtx<'a>>,
     hvar: Option<Hvar<'a>>,
@@ -33,28 +32,11 @@ impl<'a> GlyphMetrics<'a> {
         let hmtx = font.hmtx().ok();
         let hvar = font.hvar().ok();
         Self {
-            upem,
             scale,
             hmtx,
             hvar,
             coords,
         }
-    }
-
-    /// Creates a new copy of glyph metrics with the specified font size
-    /// in pixels per em.
-    ///
-    /// Specifying a size of 0.0 will result in glyph metrics that yield
-    /// results in font units.
-    pub fn with_size(&self, ppem: f32) -> Self {
-        let mut copy = self.clone();
-        let ppem = ppem.abs();
-        copy.scale = if ppem == 0.0 {
-            1.0
-        } else {
-            ppem / self.upem as f32
-        };
-        copy
     }
 
     /// Returns the advance width for the specified glyph.

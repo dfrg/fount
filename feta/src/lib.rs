@@ -5,7 +5,6 @@ Font metadata reader.
 #![no_std]
 
 mod char_map;
-mod font;
 mod glyph_metrics;
 mod localized_strings;
 mod metrics;
