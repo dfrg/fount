@@ -3,6 +3,8 @@
 This crate provides a high level interface for reading *f*ont m*eta*data. It 
 is built on top of the [read-fonts] low level parsing library.
 
+This is still in very early stages and not yet ready for use.
+
 ## Features
 
 The first cut of the library intends to expose the following metadata:
