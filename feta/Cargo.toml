@@ -10,4 +10,4 @@ categories = ["text-processing", "parsing", "graphics"]
 keywords = ["font", "parse", "text"]
 
 [dependencies]
-read-fonts = "0.0.5"
+read-fonts = { version = "0.0.5", default_features = false }
