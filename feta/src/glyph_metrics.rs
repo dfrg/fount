@@ -1,19 +1,21 @@
 use read_fonts::{
-    tables::{hmtx::LongMetric, hvar::Hvar},
+    tables::{glyf::Glyf, hmtx::LongMetric, hvar::Hvar, loca::Loca},
     types::{BigEndian, GlyphId},
     TableProvider,
 };
 
-use crate::NormalizedCoord;
+use crate::{BoundingBox, NormalizedCoord};
 
 /// Glyph specified metrics.
 #[derive(Clone)]
 pub struct GlyphMetrics<'a> {
+    glyph_count: u16,
     scale: f32,
     h_metrics: &'a [LongMetric],
     default_advance_width: u16,
     lsbs: &'a [BigEndian<i16>],
     hvar: Option<Hvar<'a>>,
+    loca_glyf: Option<(Loca<'a>, Glyf<'a>)>,
     coords: &'a [NormalizedCoord],
 }
 
@@ -27,6 +29,10 @@ impl<'a> GlyphMetrics<'a> {
         size: Option<f32>,
         coords: &'a [NormalizedCoord],
     ) -> Self {
+        let glyph_count = font
+            .maxp()
+            .map(|maxp| maxp.num_glyphs())
+            .unwrap_or_default();
         let upem = font
             .head()
             .map(|head| head.units_per_em())
@@ -44,12 +50,19 @@ impl<'a> GlyphMetrics<'a> {
             })
             .unwrap_or_default();
         let hvar = font.hvar().ok();
+        let loca_glyf = if let (Ok(loca), Ok(glyf)) = (font.loca(None), font.glyf()) {
+            Some((loca, glyf))
+        } else {
+            None
+        };
         Self {
+            glyph_count,
             scale,
             h_metrics,
             default_advance_width,
             lsbs,
             hvar,
+            loca_glyf,
             coords,
         }
     }
@@ -58,7 +71,10 @@ impl<'a> GlyphMetrics<'a> {
     ///
     /// If normalized coordinates were providing with constructing glyph metrics and
     /// an `HVAR` table is present, applies the appropriate delta.
-    pub fn advance_width(&self, glyph_id: GlyphId) -> f32 {
+    pub fn advance_width(&self, glyph_id: GlyphId) -> Option<f32> {
+        if glyph_id.to_u16() >= self.glyph_count {
+            return None;
+        }
         let mut advance = self
             .h_metrics
             .get(glyph_id.to_u16() as usize)
@@ -71,14 +87,17 @@ impl<'a> GlyphMetrics<'a> {
                 .map(|delta| delta.to_f64() as i32)
                 .unwrap_or(0);
         }
-        advance as f32 * self.scale
+        Some(advance as f32 * self.scale)
     }
 
     /// Returns the left side bearing for the specified glyph.
     ///
     /// If normalized coordinates were providing with constructing glyph metrics and
     /// an `HVAR` table is present, applies the appropriate delta.
-    pub fn left_side_bearing(&self, glyph_id: GlyphId) -> f32 {
+    pub fn left_side_bearing(&self, glyph_id: GlyphId) -> Option<f32> {
+        if glyph_id.to_u16() >= self.glyph_count {
+            return None;
+        }
         let gid_index = glyph_id.to_u16() as usize;
         let mut lsb = self
             .h_metrics
@@ -97,6 +116,24 @@ impl<'a> GlyphMetrics<'a> {
                 .map(|delta| delta.to_f64() as i32)
                 .unwrap_or(0);
         }
-        lsb as f32 * self.scale
+        Some(lsb as f32 * self.scale)
+    }
+
+    /// Returns the bounding box for the specified glyph.
+    /// 
+    /// Note that variations are not reflected in the bounding box returned by
+    /// this method.
+    pub fn bounds(&self, glyph_id: GlyphId) -> Option<BoundingBox> {
+        let (loca, glyf) = self.loca_glyf.as_ref()?;
+        Some(match loca.get_glyf(glyph_id, glyf).ok()? {
+            Some(glyph) => BoundingBox {
+                x_min: glyph.x_min() as f32,
+                y_min: glyph.y_min() as f32,
+                x_max: glyph.x_max() as f32,
+                y_max: glyph.y_max() as f32,
+            },
+            // Empty glyphs have an empty bounding box
+            None => BoundingBox::default(),
+        })
     }
 }

@@ -1,6 +1,6 @@
 use read_fonts::TableProvider;
 
-/// Generic type for representing a collection of metadata.
+/// Generic type for representing a list of metadata.
 #[derive(Clone, Debug)]
 pub struct Sequence<'a, T: SequenceElement<'a>> {
     data: T::Data,
@@ -10,7 +10,7 @@ impl<'a, T: SequenceElement<'a> + 'a> Sequence<'a, T> {
     /// Creates a new sequence from the specified table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         Self {
-            data: T::Data::from_font(font),
+            data: T::Data::new(font),
         }
     }
 
@@ -40,7 +40,7 @@ pub trait SequenceElement<'a>: Clone {
 }
 
 pub trait SequenceData<'a, T>: Clone {
-    fn from_font(font: &impl TableProvider<'a>) -> Self;
+    fn new(font: &impl TableProvider<'a>) -> Self;
     fn len(&self) -> usize;
     fn is_empty(&self) -> bool {
         self.len() == 0

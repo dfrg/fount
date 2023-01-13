@@ -13,7 +13,7 @@ use crate::{LocalizedStringId, Setting};
 /// Type for a normalized variation coordinate.
 pub type NormalizedCoord = F2Dot14;
 
-/// Variation axis.
+/// Axis of variation in a variable font.
 #[derive(Clone)]
 pub struct VariationAxis<'a> {
     index: usize,
@@ -85,7 +85,7 @@ pub struct VariationAxisSequence<'a> {
 }
 
 impl<'a> SequenceData<'a, VariationAxis<'a>> for VariationAxisSequence<'a> {
-    fn from_font(font: &impl TableProvider<'a>) -> Self {
+    fn new(font: &impl TableProvider<'a>) -> Self {
         let fvar = font.fvar().ok();
         let avar = font.avar().ok();
         Self { fvar, avar }
@@ -134,103 +134,6 @@ impl<'a> Sequence<'a, VariationAxis<'a>> {
     }
 }
 
-/// Collection of variation axes.
-#[derive(Clone)]
-pub struct VariationAxes<'a> {
-    fvar: Option<Fvar<'a>>,
-    avar: Option<Avar<'a>>,
-}
-
-impl<'a> VariationAxes<'a> {
-    /// Creates a new axis collection from the given table provider.
-    pub fn new(font: &impl TableProvider<'a>) -> Self {
-        let fvar = font.fvar().ok();
-        let avar = font.avar().ok();
-        Self { fvar, avar }
-    }
-
-    /// Returns the number of variation axes in the collection.
-    pub fn len(&self) -> usize {
-        self.fvar
-            .as_ref()
-            .map(|fvar| fvar.axis_count() as usize)
-            .unwrap_or(0)
-    }
-
-    /// Returns true if the collection is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Returns the variation axis at the specified index.
-    pub fn get(&self, index: usize) -> Option<VariationAxis<'a>> {
-        let raw = self.fvar.as_ref()?.axes().ok()?.get(index)?.clone();
-        Some(VariationAxis {
-            index,
-            record: raw,
-            avar: self.avar.clone(),
-        })
-    }
-
-    /// Returns the axis with the specified tag.
-    pub fn get_by_tag(&self, tag: Tag) -> Option<VariationAxis<'a>> {
-        self.iter().find(|axis| axis.tag() == tag)
-    }
-
-    /// Returns an iterator over pairs of axis index and normalized coordinate
-    /// for the specified sequence of variation settings.
-    pub fn normalize<I>(
-        &self,
-        variations: I,
-    ) -> impl Iterator<Item = (usize, NormalizedCoord)> + 'a + Clone
-    where
-        I: IntoIterator,
-        I::IntoIter: 'a + Clone,
-        I::Item: Into<Setting<f32>>,
-    {
-        let copy = self.clone();
-        variations.into_iter().filter_map(move |setting| {
-            let setting = setting.into();
-            let axis = copy.get_by_tag(setting.selector)?;
-            Some((axis.index(), axis.normalize(setting.value)))
-        })
-    }
-
-    /// Returns an iterator over the axes
-    pub fn iter(&self) -> impl Iterator<Item = VariationAxis<'a>> + 'a + Clone {
-        self.clone().into_iter()
-    }
-}
-
-#[derive(Clone)]
-/// Iterator over a collection of variation axes.
-pub struct AxisIter<'a> {
-    inner: VariationAxes<'a>,
-    pos: usize,
-}
-
-impl<'a> Iterator for AxisIter<'a> {
-    type Item = VariationAxis<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pos = self.pos;
-        self.pos += 1;
-        self.inner.get(pos)
-    }
-}
-
-impl<'a> IntoIterator for VariationAxes<'a> {
-    type IntoIter = AxisIter<'a>;
-    type Item = VariationAxis<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        AxisIter {
-            inner: self,
-            pos: 0,
-        }
-    }
-}
-
 /// Named instance of a variation.
 #[derive(Clone)]
 pub struct NamedInstance<'a> {
@@ -258,69 +161,31 @@ impl<'a> NamedInstance<'a> {
     }
 }
 
-/// Collection of named variation instances.
+impl<'a> SequenceElement<'a> for NamedInstance<'a> {
+    type Data = NamedInstanceSequence<'a>;
+}
+
 #[derive(Clone)]
-pub struct NamedInstances<'a> {
+pub struct NamedInstanceSequence<'a> {
     fvar: Option<Fvar<'a>>,
 }
 
-impl<'a> NamedInstances<'a> {
-    /// Creates a new instance collection from the given table provider.
-    pub fn new(font: &impl TableProvider<'a>) -> Self {
+impl<'a> SequenceData<'a, NamedInstance<'a>> for NamedInstanceSequence<'a> {
+    fn new(font: &impl TableProvider<'a>) -> Self {
         Self {
             fvar: font.fvar().ok(),
         }
     }
 
-    /// Returns the number of instances in the collection.
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         self.fvar
             .as_ref()
             .map(|fvar| fvar.instance_count() as usize)
             .unwrap_or(0)
     }
 
-    /// Returns true if the collection is empty.
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Returns the instance at the specified index.
-    pub fn get(&self, index: usize) -> Option<NamedInstance<'a>> {
+    fn get(&self, index: usize) -> Option<NamedInstance<'a>> {
         let record = self.fvar.as_ref()?.instances().ok()?.get(index).ok()?;
         Some(NamedInstance { record })
-    }
-
-    /// Returns an iterator over the instances in a colletion.
-    pub fn iter(&self) -> impl Iterator<Item = NamedInstance<'a>> + 'a + Clone {
-        self.clone().into_iter()
-    }
-}
-
-#[derive(Clone)]
-pub struct NamedInstanceIter<'a> {
-    instances: NamedInstances<'a>,
-    pos: usize,
-}
-
-impl<'a> Iterator for NamedInstanceIter<'a> {
-    type Item = NamedInstance<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pos = self.pos;
-        self.pos += 1;
-        self.instances.get(pos)
-    }
-}
-
-impl<'a> IntoIterator for NamedInstances<'a> {
-    type IntoIter = NamedInstanceIter<'a>;
-    type Item = NamedInstance<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        NamedInstanceIter {
-            instances: self,
-            pos: 0,
-        }
     }
 }

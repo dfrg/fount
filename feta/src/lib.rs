@@ -19,22 +19,26 @@ pub use raw::{CollectionRef, FileRef, FontRef};
 
 pub use char_map::{CharMap, MapVariant};
 pub use glyph_metrics::GlyphMetrics;
-pub use localized_strings::{EncodedString, LocalizedString, LocalizedStringId, LocalizedStrings};
+pub use localized_strings::{EncodedString, LocalizedString, LocalizedStringId};
 pub use metrics::{BoundingBox, Decoration, Metrics};
 pub use sequence::Sequence;
 pub use setting::Setting;
-pub use variations::{NamedInstance, NamedInstances, NormalizedCoord, VariationAxis};
+pub use variations::{NamedInstance, NormalizedCoord, VariationAxis};
+
+pub struct Weight;
+pub struct Stretch;
+pub enum Style {}
 
 /// Interface for types that can provide font metadata.
 pub trait MetadataProvider<'a>: raw::TableProvider<'a> + Sized {
-    /// Returns the collection of variation axes.
+    /// Returns the list of variation axes.
     fn variation_axes(&self) -> Sequence<'a, VariationAxis<'a>> {
         Sequence::new(self)
     }
 
-    /// Returns the collection of named variation instances.
-    fn named_instances(&self) -> NamedInstances<'a> {
-        NamedInstances::new(self)
+    /// Returns the list of named variation instances.
+    fn named_instances(&self) -> Sequence<'a, NamedInstance<'a>> {
+        Sequence::new(self)
     }
 
     /// Returns the codepoint to nominal glyph identifier mapping.
@@ -42,9 +46,9 @@ pub trait MetadataProvider<'a>: raw::TableProvider<'a> + Sized {
         CharMap::new(self)
     }
 
-    /// Returns the collection of localized strings.
-    fn localized_strings(&self) -> LocalizedStrings<'a> {
-        LocalizedStrings::new(self)
+    /// Returns the list of localized strings.
+    fn localized_strings(&self) -> Sequence<'a, LocalizedString<'a>> {
+        Sequence::new(self)
     }
 
     /// Returns the global font metrics for the specified size in pixels per em units

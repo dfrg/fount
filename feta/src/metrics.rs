@@ -2,7 +2,7 @@ use read_fonts::TableProvider;
 
 use crate::NormalizedCoord;
 
-/// Metrics for an underline or strikeout decoration.
+/// Metrics for a text decoration.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct Decoration {
     /// Offset of the decoration from the baseline.
@@ -11,16 +11,16 @@ pub struct Decoration {
     pub thickness: f32,
 }
 
-/// Metrics for an underline or strikeout decoration.
+/// Extents of a rectangular region.
 #[derive(Copy, Clone, Default, Debug)]
 pub struct BoundingBox {
-    /// Minimum x coordinate.
+    /// Minimum x-coordinate.
     pub x_min: f32,
-    /// Minimum y coordinate.
+    /// Minimum y-coordinate.
     pub y_min: f32,
-    /// Maximum x coordinate.
+    /// Maximum x-coordinate.
     pub x_max: f32,
-    /// Maximum y coordinate.
+    /// Maximum y-coordinate.
     pub y_max: f32,
 }
 
@@ -50,13 +50,13 @@ pub struct Metrics {
     /// Average width of all non-zero characters in the font.
     pub average_width: Option<f32>,
     /// Maximum advance width of all characters in the font.
-    pub max_width: f32,
+    pub max_width: Option<f32>,
     /// Metrics for an underline decoration.
     pub underline: Option<Decoration>,
     /// Metrics for a strikeout decoration.
     pub strikeout: Option<Decoration>,
     /// Union of minimum and maximum extents for all glyphs in the font.
-    pub bounds: BoundingBox,
+    pub bounds: Option<BoundingBox>,
 }
 
 impl Metrics {
@@ -86,10 +86,12 @@ impl Metrics {
             1.0
         };
         if let Ok(head) = font.head() {
-            metrics.bounds.x_min = head.x_min() as f32 * scale;
-            metrics.bounds.y_min = head.y_min() as f32 * scale;
-            metrics.bounds.x_max = head.x_max() as f32 * scale;
-            metrics.bounds.y_max = head.y_max() as f32 * scale;
+            metrics.bounds = Some(BoundingBox {
+                x_min: head.x_min() as f32 * scale,
+                y_min: head.y_min() as f32 * scale,
+                x_max: head.x_max() as f32 * scale,
+                y_max: head.y_max() as f32 * scale,
+            });
         }
         if let Ok(maxp) = font.maxp() {
             metrics.glyph_count = maxp.num_glyphs();
@@ -104,7 +106,7 @@ impl Metrics {
         }
         let hhea = font.hhea();
         if let Ok(hhea) = &hhea {
-            metrics.max_width = hhea.x_max_extent().to_i16() as f32 * scale;
+            metrics.max_width = Some(hhea.x_max_extent().to_i16() as f32 * scale);
         }
         // Choosing proper line metrics is a challenge due to the changing
         // spec, backward compatibility and broken fonts.
