@@ -7,6 +7,7 @@ use read_fonts::{
     TableProvider,
 };
 
+use crate::sequence::{Sequence, SequenceData, SequenceElement};
 use crate::{LocalizedStringId, Setting};
 
 /// Type for a normalized variation coordinate.
@@ -14,13 +15,13 @@ pub type NormalizedCoord = F2Dot14;
 
 /// Variation axis.
 #[derive(Clone)]
-pub struct Axis<'a> {
+pub struct VariationAxis<'a> {
     index: usize,
     record: fvar::VariationAxisRecord,
     avar: Option<Avar<'a>>,
 }
 
-impl<'a> Axis<'a> {
+impl<'a> VariationAxis<'a> {
     /// Returns the tag that identifies the axis.
     pub fn tag(&self) -> Tag {
         self.record.axis_tag()
@@ -31,7 +32,7 @@ impl<'a> Axis<'a> {
         self.index
     }
 
-    /// Returns the string identifier for the axis name.
+    /// Returns the localized string identifier for the name of the axis.
     pub fn name_id(&self) -> LocalizedStringId {
         LocalizedStringId(self.record.axis_name_id())
     }
@@ -71,21 +72,76 @@ impl<'a> Axis<'a> {
         let bits = i32::from_be_bytes(normalized.to_be_bytes());
         NormalizedCoord::from_raw((((bits + 2) >> 2) as i16).to_be_bytes())
     }
+}
 
-    /// Returns the inner variation axis record.
-    pub fn raw(&self) -> &fvar::VariationAxisRecord {
-        &self.record
+impl<'a> SequenceElement<'a> for VariationAxis<'a> {
+    type Data = VariationAxisSequence<'a>;
+}
+
+#[derive(Clone)]
+pub struct VariationAxisSequence<'a> {
+    fvar: Option<Fvar<'a>>,
+    avar: Option<Avar<'a>>,
+}
+
+impl<'a> SequenceData<'a, VariationAxis<'a>> for VariationAxisSequence<'a> {
+    fn from_font(font: &impl TableProvider<'a>) -> Self {
+        let fvar = font.fvar().ok();
+        let avar = font.avar().ok();
+        Self { fvar, avar }
+    }
+
+    fn len(&self) -> usize {
+        self.fvar
+            .as_ref()
+            .map(|fvar| fvar.axis_count() as usize)
+            .unwrap_or(0)
+    }
+
+    fn get(&self, index: usize) -> Option<VariationAxis<'a>> {
+        let record = self.fvar.as_ref()?.axes().ok()?.get(index)?.clone();
+        Some(VariationAxis {
+            index,
+            record,
+            avar: self.avar.clone(),
+        })
+    }
+}
+
+impl<'a> Sequence<'a, VariationAxis<'a>> {
+    /// Returns the axis with the specified tag.
+    pub fn get_by_tag(&self, tag: Tag) -> Option<VariationAxis<'a>> {
+        self.iter().find(|axis| axis.tag() == tag)
+    }
+
+    /// Returns an iterator over pairs of axis index and normalized coordinate
+    /// for the specified sequence of variation settings.
+    pub fn normalize<I>(
+        &self,
+        variations: I,
+    ) -> impl Iterator<Item = (usize, NormalizedCoord)> + 'a + Clone
+    where
+        I: IntoIterator,
+        I::IntoIter: 'a + Clone,
+        I::Item: Into<Setting<f32>>,
+    {
+        let copy = self.clone();
+        variations.into_iter().filter_map(move |setting| {
+            let setting = setting.into();
+            let axis = copy.get_by_tag(setting.selector)?;
+            Some((axis.index(), axis.normalize(setting.value)))
+        })
     }
 }
 
 /// Collection of variation axes.
 #[derive(Clone)]
-pub struct AxisCollection<'a> {
+pub struct VariationAxes<'a> {
     fvar: Option<Fvar<'a>>,
     avar: Option<Avar<'a>>,
 }
 
-impl<'a> AxisCollection<'a> {
+impl<'a> VariationAxes<'a> {
     /// Creates a new axis collection from the given table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         let fvar = font.fvar().ok();
@@ -107,9 +163,9 @@ impl<'a> AxisCollection<'a> {
     }
 
     /// Returns the variation axis at the specified index.
-    pub fn get(&self, index: usize) -> Option<Axis<'a>> {
+    pub fn get(&self, index: usize) -> Option<VariationAxis<'a>> {
         let raw = self.fvar.as_ref()?.axes().ok()?.get(index)?.clone();
-        Some(Axis {
+        Some(VariationAxis {
             index,
             record: raw,
             avar: self.avar.clone(),
@@ -117,7 +173,7 @@ impl<'a> AxisCollection<'a> {
     }
 
     /// Returns the axis with the specified tag.
-    pub fn get_by_tag(&self, tag: Tag) -> Option<Axis<'a>> {
+    pub fn get_by_tag(&self, tag: Tag) -> Option<VariationAxis<'a>> {
         self.iter().find(|axis| axis.tag() == tag)
     }
 
@@ -141,7 +197,7 @@ impl<'a> AxisCollection<'a> {
     }
 
     /// Returns an iterator over the axes
-    pub fn iter(&self) -> impl Iterator<Item = Axis<'a>> + 'a + Clone {
+    pub fn iter(&self) -> impl Iterator<Item = VariationAxis<'a>> + 'a + Clone {
         self.clone().into_iter()
     }
 }
@@ -149,12 +205,12 @@ impl<'a> AxisCollection<'a> {
 #[derive(Clone)]
 /// Iterator over a collection of variation axes.
 pub struct AxisIter<'a> {
-    inner: AxisCollection<'a>,
+    inner: VariationAxes<'a>,
     pos: usize,
 }
 
 impl<'a> Iterator for AxisIter<'a> {
-    type Item = Axis<'a>;
+    type Item = VariationAxis<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let pos = self.pos;
@@ -163,9 +219,9 @@ impl<'a> Iterator for AxisIter<'a> {
     }
 }
 
-impl<'a> IntoIterator for AxisCollection<'a> {
+impl<'a> IntoIterator for VariationAxes<'a> {
     type IntoIter = AxisIter<'a>;
-    type Item = Axis<'a>;
+    type Item = VariationAxis<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
         AxisIter {
@@ -182,38 +238,33 @@ pub struct NamedInstance<'a> {
 }
 
 impl<'a> NamedInstance<'a> {
-    /// Returns the string identifier for the instance name.
-    pub fn name_id(&self) -> LocalizedStringId {
+    /// Returns the localized string identifier for the subfamily name of the instance.
+    pub fn subfamily_name_id(&self) -> LocalizedStringId {
         LocalizedStringId(self.record.subfamily_name_id)
     }
 
-    /// Returns the string identifier for the instance PostScript name.
+    /// Returns the string identifier for the PostScript name of the instance.
     pub fn post_script_name_id(&self) -> Option<LocalizedStringId> {
         self.record.post_script_name_id.map(LocalizedStringId)
     }
 
-    /// Returns an iterator over the sequence of user coordinates that define
-    /// the instance.
-    pub fn coordinates(&self) -> impl Iterator<Item = f32> + 'a + Clone {
+    /// Returns an iterator over the sequence of unnormalized user space coordinates that define
+    /// the instance, one coordinate per axis.
+    pub fn coords(&self) -> impl Iterator<Item = f32> + 'a + Clone {
         self.record
             .coordinates
             .iter()
             .map(|coord| coord.get().to_f64() as _)
     }
-
-    /// Returns the inner instance record.
-    pub fn raw(&self) -> &fvar::InstanceRecord<'a> {
-        &self.record
-    }
 }
 
 /// Collection of named variation instances.
 #[derive(Clone)]
-pub struct NamedInstanceCollection<'a> {
+pub struct NamedInstances<'a> {
     fvar: Option<Fvar<'a>>,
 }
 
-impl<'a> NamedInstanceCollection<'a> {
+impl<'a> NamedInstances<'a> {
     /// Creates a new instance collection from the given table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         Self {
@@ -247,12 +298,12 @@ impl<'a> NamedInstanceCollection<'a> {
 }
 
 #[derive(Clone)]
-pub struct InstanceIter<'a> {
-    instances: NamedInstanceCollection<'a>,
+pub struct NamedInstanceIter<'a> {
+    instances: NamedInstances<'a>,
     pos: usize,
 }
 
-impl<'a> Iterator for InstanceIter<'a> {
+impl<'a> Iterator for NamedInstanceIter<'a> {
     type Item = NamedInstance<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -262,12 +313,12 @@ impl<'a> Iterator for InstanceIter<'a> {
     }
 }
 
-impl<'a> IntoIterator for NamedInstanceCollection<'a> {
-    type IntoIter = InstanceIter<'a>;
+impl<'a> IntoIterator for NamedInstances<'a> {
+    type IntoIter = NamedInstanceIter<'a>;
     type Item = NamedInstance<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        InstanceIter {
+        NamedInstanceIter {
             instances: self,
             pos: 0,
         }

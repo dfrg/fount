@@ -21,15 +21,18 @@ impl<'a> GlyphMetrics<'a> {
     /// Creates new glyph metrics from the specified font, size in pixels per em units, and normalized
     /// variation coordinates.
     ///
-    /// Specifying a size of 0.0 will result in glyph metrics that yield
-    /// results in font units.
-    pub fn new(font: &impl TableProvider<'a>, size: f32, coords: &'a [NormalizedCoord]) -> Self {
+    /// If `size` is `None`, resulting metric values will be in font units.
+    pub fn new(
+        font: &impl TableProvider<'a>,
+        size: Option<f32>,
+        coords: &'a [NormalizedCoord],
+    ) -> Self {
         let upem = font
             .head()
             .map(|head| head.units_per_em())
             .unwrap_or_default()
             .max(1);
-        let size = size.abs();
+        let size = size.unwrap_or(0.0).abs();
         let scale = if size == 0.0 { 1.0 } else { size / upem as f32 };
         let (h_metrics, default_advance_width, lsbs) = font
             .hmtx()
@@ -52,6 +55,9 @@ impl<'a> GlyphMetrics<'a> {
     }
 
     /// Returns the advance width for the specified glyph.
+    ///
+    /// If normalized coordinates were providing with constructing glyph metrics and
+    /// an `HVAR` table is present, applies the appropriate delta.
     pub fn advance_width(&self, glyph_id: GlyphId) -> f32 {
         let mut advance = self
             .h_metrics
@@ -69,6 +75,9 @@ impl<'a> GlyphMetrics<'a> {
     }
 
     /// Returns the left side bearing for the specified glyph.
+    ///
+    /// If normalized coordinates were providing with constructing glyph metrics and
+    /// an `HVAR` table is present, applies the appropriate delta.
     pub fn left_side_bearing(&self, glyph_id: GlyphId) -> f32 {
         let gid_index = glyph_id.to_u16() as usize;
         let mut lsb = self

@@ -2,12 +2,25 @@ use read_fonts::types::Tag;
 
 use core::str::FromStr;
 
-/// Setting defined by a tag selector and a value.
+/// Setting defined by a selector tag and an associated value.
+///
+/// The general structure of (tag, value) pairs is used to specify both
+/// variations and features.
+///
+/// In the case of variations, the selector tag chooses a variation axis
+/// and the value defines the position on that axis in user space
+/// coordinates.
+///
+/// For features, the selector specifies a
+/// [feature tag](https://learn.microsoft.com/en-us/typography/opentype/spec/featuretags)
+/// and the value can have one of two meanings. Most features, such as `liga`, can be toggled,
+/// and are enabled or disabled by a non-zero or zero value, respectively. Features like
+/// `aalt` use the value as an index to select an alternate glyph from a set.  
 #[derive(Copy, Clone, Debug)]
 pub struct Setting<T> {
     /// Tag that specifies the target setting.
     pub selector: Tag,
-    /// Value for the variation.
+    /// The desired value for the setting.
     pub value: T,
 }
 
