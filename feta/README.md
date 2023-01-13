@@ -15,10 +15,10 @@ The first cut of the library intends to expose the following metadata:
 * Glyph metrics with variation support (advance width, left side-bearing, etc)
 * Codepoint to nominal glyph identifier mapping
     * Unicode variation selectors
+* Localized strings
 
 Future goals include:
 
-* Localized strings
 * Layout feature enumeration
     * Coverage (is a particular glyph processed by a feature?)
 * Color palettes
