@@ -17,14 +17,14 @@ use core::str::FromStr;
 /// and are enabled or disabled by a non-zero or zero value, respectively. Features like
 /// `aalt` use the value as an index to select an alternate glyph from a set.  
 #[derive(Copy, Clone, Debug)]
-pub struct Setting<T> {
+pub struct SelectorValue<T> {
     /// Tag that specifies the target setting.
     pub selector: Tag,
     /// The desired value for the setting.
     pub value: T,
 }
 
-impl<T> From<(Tag, T)> for Setting<T> {
+impl<T> From<(Tag, T)> for SelectorValue<T> {
     fn from(s: (Tag, T)) -> Self {
         Self {
             selector: s.0,
@@ -33,7 +33,7 @@ impl<T> From<(Tag, T)> for Setting<T> {
     }
 }
 
-impl<T> From<(&str, T)> for Setting<T> {
+impl<T> From<(&str, T)> for SelectorValue<T> {
     fn from(s: (&str, T)) -> Self {
         Self {
             selector: Tag::from_str(s.0).unwrap_or_default(),
@@ -42,7 +42,7 @@ impl<T> From<(&str, T)> for Setting<T> {
     }
 }
 
-impl<T> From<([u8; 4], T)> for Setting<T> {
+impl<T> From<([u8; 4], T)> for SelectorValue<T> {
     fn from(s: ([u8; 4], T)) -> Self {
         Self {
             selector: Tag::new_checked(&s.0[..]).unwrap_or_default(),

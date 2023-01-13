@@ -120,7 +120,7 @@ impl<'a> GlyphMetrics<'a> {
     }
 
     /// Returns the bounding box for the specified glyph.
-    /// 
+    ///
     /// Note that variations are not reflected in the bounding box returned by
     /// this method.
     pub fn bounds(&self, glyph_id: GlyphId) -> Option<BoundingBox> {

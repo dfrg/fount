@@ -5,8 +5,6 @@ use read_fonts::{
 
 use core::fmt;
 
-use crate::sequence::{SequenceData, SequenceElement};
-
 /// Identifier for a localized string.
 ///
 /// A set of pre-defined identifiers exist for accessing names and other various metadata
@@ -18,9 +16,9 @@ use crate::sequence::{SequenceData, SequenceElement};
 ///
 /// For more detail, see <https://learn.microsoft.com/en-us/typography/opentype/spec/name#name-ids>
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct LocalizedStringId(pub u16);
+pub struct StringId(pub u16);
 
-impl LocalizedStringId {
+impl StringId {
     /// Copyright notice.
     pub const COPYRIGHT_NOTICE: Self = Self(0);
 
@@ -118,7 +116,7 @@ impl LocalizedStringId {
     pub const VARIATIONS_POSTSCRIPT_NAME_PREFIX: Self = Self(25);
 }
 
-impl fmt::Debug for LocalizedStringId {
+impl fmt::Debug for StringId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let name = match *self {
             Self::COPYRIGHT_NOTICE => "COPYRIGHT_NOTICE",
@@ -163,12 +161,12 @@ impl<'a> LocalizedString<'a> {
     /// Returns the string identifier.
     ///
     /// Some identifiers are pre-defined and are available as associated constants
-    /// on [LocalizedStringId]. Others are used to specify names for variation axes,
+    /// on [StringId]. Others are used to specify names for variation axes,
     /// name instances, color palettes, etc.
     ///
     /// For a full description, see <https://learn.microsoft.com/en-us/typography/opentype/spec/name#name-ids>
-    pub fn id(&self) -> LocalizedStringId {
-        LocalizedStringId(self.record.name_id())
+    pub fn id(&self) -> StringId {
+        StringId(self.record.name_id())
     }
 
     /// Returns the language for this string.
@@ -240,34 +238,71 @@ impl<'a> Iterator for Chars<'a> {
     }
 }
 
-impl<'a> SequenceElement<'a> for LocalizedString<'a> {
-    type Data = LocalizedStringSequence<'a>;
-}
-
+/// Collection of localized strings.
 #[derive(Clone)]
-pub struct LocalizedStringSequence<'a> {
+pub struct LocalizedStringList<'a> {
     name: Option<Name<'a>>,
 }
 
-impl<'a> SequenceData<'a, LocalizedString<'a>> for LocalizedStringSequence<'a> {
-    fn new(font: &impl TableProvider<'a>) -> Self {
+impl<'a> LocalizedStringList<'a> {
+    /// Creates a new localized string collection from the specified table provider.
+    pub fn new(font: &impl TableProvider<'a>) -> Self {
         Self {
             name: font.name().ok(),
         }
     }
 
     /// Returns the number of strings in the collection.
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.name
             .as_ref()
             .map(|name| name.count() as usize)
             .unwrap_or_default()
     }
 
-    fn get(&self, index: usize) -> Option<LocalizedString<'a>> {
+    /// Returns true if the collection is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the localized string at the specified index.
+    pub fn get(&self, index: usize) -> Option<LocalizedString<'a>> {
         let name = self.name.clone()?;
         let record = name.name_record().get(index)?.clone();
         Some(LocalizedString { name, record })
+    }
+
+    /// Returns an iterator over the localized strings in the collection.
+    pub fn iter(&self) -> impl Iterator<Item = LocalizedString<'a>> + 'a + Clone {
+        self.clone().into_iter()
+    }
+}
+
+#[derive(Clone)]
+pub struct LocalizedStringIter<'a> {
+    strings: LocalizedStringList<'a>,
+    pos: usize,
+}
+
+impl<'a> Iterator for LocalizedStringIter<'a> {
+    type Item = LocalizedString<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let pos = self.pos;
+        self.pos += 1;
+        self.strings.get(pos)
+    }
+}
+
+impl<'a> IntoIterator for LocalizedStringList<'a> {
+    type IntoIter = LocalizedStringIter<'a>;
+    type Item = LocalizedString<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        LocalizedStringIter {
+            strings: self,
+            pos: 0,
+        }
     }
 }
 

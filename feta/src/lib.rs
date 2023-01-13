@@ -4,11 +4,11 @@ Font metadata reader.
 
 #![no_std]
 
-mod char_map;
+mod attributes;
+mod charmap;
 mod glyph_metrics;
 mod localized_strings;
 mod metrics;
-mod sequence;
 mod setting;
 mod variations;
 
@@ -17,38 +17,41 @@ pub extern crate read_fonts as raw;
 
 pub use raw::{CollectionRef, FileRef, FontRef};
 
-pub use char_map::{CharMap, MapVariant};
+pub use attributes::{Stretch, Style, Weight};
+pub use charmap::{Charmap, MapVariant};
 pub use glyph_metrics::GlyphMetrics;
-pub use localized_strings::{EncodedString, LocalizedString, LocalizedStringId};
+pub use localized_strings::{EncodedString, LocalizedString, LocalizedStringList, StringId};
 pub use metrics::{BoundingBox, Decoration, Metrics};
-pub use sequence::Sequence;
-pub use setting::Setting;
-pub use variations::{NamedInstance, NormalizedCoord, VariationAxis};
-
-pub struct Weight;
-pub struct Stretch;
-pub enum Style {}
+pub use setting::SelectorValue;
+pub use variations::{
+    NamedInstance, NamedInstanceList, NormalizedCoord, VariationAxis, VariationAxisList,
+};
 
 /// Interface for types that can provide font metadata.
 pub trait MetadataProvider<'a>: raw::TableProvider<'a> + Sized {
     /// Returns the list of variation axes.
-    fn variation_axes(&self) -> Sequence<'a, VariationAxis<'a>> {
-        Sequence::new(self)
+    fn variation_axes(&self) -> VariationAxisList<'a> {
+        VariationAxisList::new(self)
     }
 
     /// Returns the list of named variation instances.
-    fn named_instances(&self) -> Sequence<'a, NamedInstance<'a>> {
-        Sequence::new(self)
+    fn named_instances(&self) -> NamedInstanceList<'a> {
+        NamedInstanceList::new(self)
     }
 
     /// Returns the codepoint to nominal glyph identifier mapping.
-    fn char_map(&self) -> CharMap<'a> {
-        CharMap::new(self)
+    fn charmap(&self) -> Charmap<'a> {
+        Charmap::new(self)
     }
 
     /// Returns the list of localized strings.
-    fn localized_strings(&self) -> Sequence<'a, LocalizedString<'a>> {
-        Sequence::new(self)
+    fn localized_strings(&self) -> LocalizedStringList<'a> {
+        LocalizedStringList::new(self)
+    }
+
+    /// Returns the stretch, style and weight attributes.
+    fn attributes(&self) -> (Stretch, Style, Weight) {
+        attributes::from_font(self)
     }
 
     /// Returns the global font metrics for the specified size in pixels per em units

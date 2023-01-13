@@ -50,12 +50,12 @@ pub enum MapVariant {
 
 /// Mapping of codepoints to nominal glyph identifiers.
 // #[derive(Clone)]
-pub struct CharMap<'a> {
+pub struct Charmap<'a> {
     map: Option<Map<'a>>,
     vs_map: Option<Cmap14<'a>>,
 }
 
-impl<'a> CharMap<'a> {
+impl<'a> Charmap<'a> {
     /// Creates a new character map from the specified table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         let (map, vs_map) = if let Ok(cmap) = font.cmap() {
