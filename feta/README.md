@@ -27,6 +27,6 @@ Future goals include:
 ## Non-goals
 
 This library is not intended to support glyph scaling (loading and hinting of outlines) or
-shaping (processing of subsitution and positioning features).
+shaping (processing of substitution and positioning features).
 
 [read-fonts]: https://github.com/googlefonts/fontations/tree/main/read-fonts

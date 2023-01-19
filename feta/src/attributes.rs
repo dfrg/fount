@@ -102,7 +102,7 @@ pub fn from_font<'a>(font: &impl TableProvider<'a>) -> (Stretch, Style, Weight) 
     let mut weight = Weight::default();
     if let Ok(os2) = font.os2() {
         weight = Weight(os2.us_weight_class().clamp(1, 1000) as f32);
-        stretch = match os2.us_weight_class() {
+        stretch = match os2.us_width_class() {
             1 => Stretch::ULTRA_CONDENSED,
             2 => Stretch::EXTRA_CONDENSED,
             3 => Stretch::CONDENSED,
@@ -130,7 +130,7 @@ pub fn from_font<'a>(font: &impl TableProvider<'a>) -> (Stretch, Style, Weight) 
         const MAC_STYLE_BOLD: u16 = 1;
         const MAC_STYLE_ITALIC: u16 = 2;
         if head.mac_style() & MAC_STYLE_BOLD != 0 {
-            weight = Weight(700.0);
+            weight = Weight::BOLD;
         }
         if head.mac_style() & MAC_STYLE_ITALIC != 0 {
             style = Style::Italic;

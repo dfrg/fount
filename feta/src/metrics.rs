@@ -150,38 +150,36 @@ impl Metrics {
                         metrics.leading = os2.s_typo_line_gap() as f32 * scale;
                     } else {
                         metrics.ascent = os2.us_win_ascent() as f32 * scale;
-                        // winDescent is always positive while other descent values are negative. Negate it
+                        // Win descent is always positive while other descent values are negative. Negate it
                         // to ensure we return consistent metrics.
                         metrics.descent = -(os2.us_win_descent() as f32 * scale);
                     }
                 }
             }
         }
-        if !coords.is_empty() {
-            if let Ok(mvar) = font.mvar() {
-                use read_fonts::tables::mvar::tags::*;
-                macro_rules! metric_delta {
-                    ($tag: ident) => {
-                        mvar.metric_delta($tag, coords).unwrap_or_default().to_f64() as f32 * scale
-                    };
-                }
-                metrics.ascent += metric_delta!(HASC);
-                metrics.descent += metric_delta!(HDSC);
-                metrics.leading += metric_delta!(HLGP);
-                if let Some(cap_height) = &mut metrics.cap_height {
-                    *cap_height += metric_delta!(CPHT);
-                }
-                if let Some(x_height) = &mut metrics.x_height {
-                    *x_height += metric_delta!(XHGT);
-                }
-                if let Some(underline) = &mut metrics.underline {
-                    underline.offset += metric_delta!(UNDO);
-                    underline.thickness += metric_delta!(UNDS);
-                }
-                if let Some(strikeout) = &mut metrics.strikeout {
-                    strikeout.offset += metric_delta!(STRO);
-                    strikeout.thickness += metric_delta!(STRS);
-                }
+        if let (Ok(mvar), true) = (font.mvar(), !coords.is_empty()) {
+            use read_fonts::tables::mvar::tags::*;
+            macro_rules! metric_delta {
+                ($tag: ident) => {
+                    mvar.metric_delta($tag, coords).unwrap_or_default().to_f64() as f32 * scale
+                };
+            }
+            metrics.ascent += metric_delta!(HASC);
+            metrics.descent += metric_delta!(HDSC);
+            metrics.leading += metric_delta!(HLGP);
+            if let Some(cap_height) = &mut metrics.cap_height {
+                *cap_height += metric_delta!(CPHT);
+            }
+            if let Some(x_height) = &mut metrics.x_height {
+                *x_height += metric_delta!(XHGT);
+            }
+            if let Some(underline) = &mut metrics.underline {
+                underline.offset += metric_delta!(UNDO);
+                underline.thickness += metric_delta!(UNDS);
+            }
+            if let Some(strikeout) = &mut metrics.strikeout {
+                strikeout.offset += metric_delta!(STRO);
+                strikeout.thickness += metric_delta!(STRS);
             }
         }
         metrics
