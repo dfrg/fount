@@ -1,9 +1,6 @@
 use read_fonts::{
-    tables::{
-        avar::Avar,
-        fvar::{self, Fvar},
-    },
-    types::{F2Dot14, Fixed, Scalar, Tag},
+    tables::fvar::{self, Fvar},
+    types::{F2Dot14, Fixed, Tag},
     TableProvider,
 };
 
@@ -14,13 +11,12 @@ pub type NormalizedCoord = F2Dot14;
 
 /// Axis of variation in a variable font.
 #[derive(Clone)]
-pub struct VariationAxis<'a> {
+pub struct VariationAxis {
     index: usize,
     record: fvar::VariationAxisRecord,
-    avar: Option<Avar<'a>>,
 }
 
-impl<'a> VariationAxis<'a> {
+impl VariationAxis {
     /// Returns the tag that identifies the axis.
     pub fn tag(&self) -> Tag {
         self.record.axis_tag()
@@ -59,17 +55,12 @@ impl<'a> VariationAxis<'a> {
 
     /// Returns a normalized coordinate for the given user coordinate. The value will be
     /// clamped to the range specified by the minimum and maximum values.
+    /// 
+    /// This does not apply any axis variation remapping.
     pub fn normalize(&self, coord: f32) -> NormalizedCoord {
-        let mut normalized = self.record.normalize(Fixed::from_f64(coord as _));
-        if let Some(Ok(segment_map)) = self
-            .avar
-            .as_ref()
-            .and_then(|avar| avar.axis_segment_maps().get(self.index))
-        {
-            normalized = segment_map.apply(normalized);
-        }
-        let bits = i32::from_be_bytes(normalized.to_be_bytes());
-        NormalizedCoord::from_raw((((bits + 2) >> 2) as i16).to_be_bytes())
+        self.record
+            .normalize(Fixed::from_f64(coord as _))
+            .to_f2dot14()
     }
 }
 
@@ -77,15 +68,13 @@ impl<'a> VariationAxis<'a> {
 #[derive(Clone)]
 pub struct VariationAxisList<'a> {
     fvar: Option<Fvar<'a>>,
-    avar: Option<Avar<'a>>,
 }
 
 impl<'a> VariationAxisList<'a> {
     /// Creates a new axis collection from the given table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         let fvar = font.fvar().ok();
-        let avar = font.avar().ok();
-        Self { fvar, avar }
+        Self { fvar }
     }
 
     /// Returns the number of variation axes in the collection.
@@ -102,17 +91,13 @@ impl<'a> VariationAxisList<'a> {
     }
 
     /// Returns the variation axis at the specified index.
-    pub fn get(&self, index: usize) -> Option<VariationAxis<'a>> {
+    pub fn get(&self, index: usize) -> Option<VariationAxis> {
         let raw = self.fvar.as_ref()?.axes().ok()?.get(index)?.clone();
-        Some(VariationAxis {
-            index,
-            record: raw,
-            avar: self.avar.clone(),
-        })
+        Some(VariationAxis { index, record: raw })
     }
 
     /// Returns the axis with the specified tag.
-    pub fn get_by_tag(&self, tag: Tag) -> Option<VariationAxis<'a>> {
+    pub fn get_by_tag(&self, tag: Tag) -> Option<VariationAxis> {
         self.iter().find(|axis| axis.tag() == tag)
     }
 
@@ -136,7 +121,7 @@ impl<'a> VariationAxisList<'a> {
     }
 
     /// Returns an iterator over the axes
-    pub fn iter(&self) -> impl Iterator<Item = VariationAxis<'a>> + 'a + Clone {
+    pub fn iter(&self) -> impl Iterator<Item = VariationAxis> + 'a + Clone {
         self.clone().into_iter()
     }
 }
@@ -149,7 +134,7 @@ pub struct AxisIter<'a> {
 }
 
 impl<'a> Iterator for AxisIter<'a> {
-    type Item = VariationAxis<'a>;
+    type Item = VariationAxis;
 
     fn next(&mut self) -> Option<Self::Item> {
         let pos = self.pos;
@@ -160,7 +145,7 @@ impl<'a> Iterator for AxisIter<'a> {
 
 impl<'a> IntoIterator for VariationAxisList<'a> {
     type IntoIter = AxisIter<'a>;
-    type Item = VariationAxis<'a>;
+    type Item = VariationAxis;
 
     fn into_iter(self) -> Self::IntoIter {
         AxisIter {

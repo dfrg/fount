@@ -10,4 +10,4 @@ categories = ["text-processing", "parsing", "graphics"]
 keywords = ["font", "parse", "text"]
 
 [dependencies]
-read-fonts = { version = "0.0.5", default_features = false }
+read-fonts = { git = "https://github.com/googlefonts/fontations", default_features = false }
