@@ -1,0 +1,13 @@
+[package]
+name = "feta"
+version = "0.0.0"
+edition = "2021"
+license = "MIT/Apache-2.0"
+description = "High level parsing of metadata from OpenType font files."
+repository = "https://github.com/dfrg/fount"
+readme = "README.md"
+categories = ["text-processing", "parsing", "graphics"]
+keywords = ["font", "parse", "text"]
+
+[dependencies]
+read-fonts = { git = "https://github.com/googlefonts/fontations", default_features = false }
