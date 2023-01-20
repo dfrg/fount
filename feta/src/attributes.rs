@@ -36,7 +36,7 @@ impl Stretch {
 
 impl Default for Stretch {
     fn default() -> Self {
-        Self(1.0)
+        Self::NORMAL
     }
 }
 
@@ -92,7 +92,7 @@ impl Weight {
 
 impl Default for Weight {
     fn default() -> Self {
-        Self(400.0)
+        Self::NORMAL
     }
 }
 
