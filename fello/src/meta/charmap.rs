@@ -1,17 +1,39 @@
+/*! Mapping characters to glyph identifiers.
+
+*/
+
 use read_fonts::{
     tables::cmap::{self, Cmap, Cmap14, CmapSubtable, PlatformId},
     types::{GlyphId, Uint24},
     TableProvider,
 };
 
+pub use read_fonts::tables::cmap::MapVariant;
+
+/// Indices of selected mapping subtables.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct SelectedMaps {
+    /// Index of Unicode or symbol mapping subtable.
+    pub mapping: Option<u16>,
+    /// True if the above is a symbol mapping.
+    pub is_symbol: bool,
+    /// Index of Unicode variation selector sutable.
+    pub variants: Option<u16>,
+}
+
 struct Map<'a> {
     map: CmapSubtable<'a>,
+    index: u16,
     is_symbol: bool,
 }
 
 impl<'a> Map<'a> {
-    fn new(map: CmapSubtable<'a>, is_symbol: bool) -> Self {
-        Self { map, is_symbol }
+    fn new(map: CmapSubtable<'a>, index: u16, is_symbol: bool) -> Self {
+        Self {
+            map,
+            index,
+            is_symbol,
+        }
     }
 
     fn map(&self, codepoint: u32) -> Option<GlyphId> {
@@ -37,22 +59,11 @@ impl<'a> Map<'a> {
     }
 }
 
-/// Result of the mapping a codepoint with a variation selector.
-#[derive(Copy, Clone, Debug)]
-pub enum MapVariant {
-    /// The variation selector should be ignored and the default mapping
-    /// of the character should be used.
-    Default,
-    /// The variant glyph mapped by a codepoint and associated variation
-    /// selector.
-    Variant(GlyphId),
-}
-
 /// Mapping of codepoints to nominal glyph identifiers.
 // #[derive(Clone)]
 pub struct Charmap<'a> {
     map: Option<Map<'a>>,
-    vs_map: Option<Cmap14<'a>>,
+    vs_map: Option<(Cmap14<'a>, u16)>,
 }
 
 impl<'a> Charmap<'a> {
@@ -67,6 +78,26 @@ impl<'a> Charmap<'a> {
             (None, None)
         };
         Self { map, vs_map }
+    }
+
+    /// Returns the selected mapping subtables.
+    pub fn selected_maps(&self) -> SelectedMaps {
+        let (mapping, is_symbol) = self
+            .map
+            .as_ref()
+            .map(|map| (Some(map.index), map.is_symbol))
+            .unwrap_or_default();
+
+        SelectedMaps {
+            mapping,
+            is_symbol,
+            variants: self.vs_map.as_ref().map(|map| map.1),
+        }
+    }
+
+    /// Returns true if a symbol mapping was selected.
+    pub fn is_symbol(&self) -> bool {
+        self.map.as_ref().map(|x| x.is_symbol).unwrap_or(false)
     }
 
     /// Maps a codepoint to a nominal glyph identifier. Returns `None` if a mapping does
@@ -89,45 +120,8 @@ impl<'a> Charmap<'a> {
         codepoint: impl Into<u32>,
         selector: impl Into<u32>,
     ) -> Option<MapVariant> {
-        let map = self.vs_map.as_ref()?;
-        let codepoint = codepoint.into();
-        let selector = selector.into();
-        let selector_records = map.var_selector();
-        let selector_record = match selector_records.binary_search_by(|record| {
-            <Uint24 as Into<u32>>::into(record.var_selector()).cmp(&selector)
-        }) {
-            Ok(idx) => selector_records.get(idx)?,
-            _ => return None,
-        };
-        if let Some(Ok(default_uvs)) = selector_record.default_uvs(map.offset_data()) {
-            let ranges = default_uvs.ranges();
-            let mut lo = 0;
-            let mut hi = ranges.len();
-            while lo < hi {
-                let i = (lo + hi) / 2;
-                let range = &ranges[i];
-                let start = range.start_unicode_value().into();
-                if codepoint < start {
-                    hi = i;
-                } else if codepoint > (start + range.additional_count() as u32) {
-                    lo = i + 1;
-                } else {
-                    return Some(MapVariant::Default);
-                }
-            }
-        }
-        if let Some(Ok(non_default_uvs)) = selector_record.non_default_uvs(map.offset_data()) {
-            let mapping = non_default_uvs.uvs_mapping();
-            let ix = mapping
-                .binary_search_by(|rec| {
-                    <Uint24 as Into<u32>>::into(rec.unicode_value()).cmp(&codepoint)
-                })
-                .ok()?;
-            return Some(MapVariant::Variant(GlyphId::new(
-                mapping.get(ix)?.glyph_id(),
-            )));
-        }
-        None
+        let map = &self.vs_map.as_ref()?.0;
+        map.map_variant(codepoint, selector)
     }
 }
 
@@ -141,12 +135,12 @@ fn find_symbol_or_unicode_subtable<'a>(cmap: &Cmap<'a>) -> Option<Map<'a>> {
     const ENCODING_APPLE_ID_UNICODE_32: u16 = 4;
     let records = cmap.encoding_records();
     // HarfBuzz prefers a symbol subtable.
-    for rec in records {
+    for (i, rec) in records.iter().enumerate() {
         if let (PlatformId::Windows, ENCODING_MS_SYMBOL) = (rec.platform_id(), rec.encoding_id()) {
             if let Ok(subtable) = rec.subtable(cmap.offset_data()) {
                 match subtable {
                     CmapSubtable::Format4(_) | CmapSubtable::Format12(_) => {
-                        return Some(Map::new(subtable, true));
+                        return Some(Map::new(subtable, i as u16, true));
                     }
                     _ => {}
                 }
@@ -156,14 +150,14 @@ fn find_symbol_or_unicode_subtable<'a>(cmap: &Cmap<'a>) -> Option<Map<'a>> {
     // First, search for a UCS4 mapping.
     // According to FreeType, the most interesting table (Windows, UCS4) often appears
     // last, so search in reverse order.
-    for rec in records.iter().rev() {
+    for (i, rec) in records.iter().enumerate().rev() {
         match (rec.platform_id(), rec.encoding_id()) {
             (PlatformId::Windows, ENCODING_MS_ID_UCS_4)
             | (PlatformId::Unicode, ENCODING_APPLE_ID_UNICODE_32) => {
                 if let Ok(subtable) = rec.subtable(cmap.offset_data()) {
                     match subtable {
                         CmapSubtable::Format4(_) | CmapSubtable::Format12(_) => {
-                            return Some(Map::new(subtable, false));
+                            return Some(Map::new(subtable, i as u16, false));
                         }
                         _ => {}
                     }
@@ -173,7 +167,7 @@ fn find_symbol_or_unicode_subtable<'a>(cmap: &Cmap<'a>) -> Option<Map<'a>> {
         }
     }
     // Now simply search for any Unicode mapping, again in reverse.
-    for rec in records.iter().rev() {
+    for (i, rec) in records.iter().enumerate().rev() {
         match (rec.platform_id(), rec.encoding_id()) {
             (PlatformId::ISO, _)
             | (PlatformId::Unicode, _)
@@ -182,7 +176,7 @@ fn find_symbol_or_unicode_subtable<'a>(cmap: &Cmap<'a>) -> Option<Map<'a>> {
                 if let Ok(subtable) = rec.subtable(cmap.offset_data()) {
                     match subtable {
                         CmapSubtable::Format4(_) | CmapSubtable::Format12(_) => {
-                            return Some(Map::new(subtable, false));
+                            return Some(Map::new(subtable, i as u16, false));
                         }
                         _ => {}
                     }
@@ -195,14 +189,14 @@ fn find_symbol_or_unicode_subtable<'a>(cmap: &Cmap<'a>) -> Option<Map<'a>> {
 }
 
 /// Searches for a format 14 subtable for mapping variant selector sequences.
-fn find_variant_selector_subtable<'a>(cmap: &Cmap<'a>) -> Option<Cmap14<'a>> {
+fn find_variant_selector_subtable<'a>(cmap: &Cmap<'a>) -> Option<(Cmap14<'a>, u16)> {
     const ENCODING_APPLE_ID_VARIANT_SELECTOR: u16 = 5;
-    for rec in cmap.encoding_records() {
+    for (i, rec) in cmap.encoding_records().iter().enumerate() {
         if let (PlatformId::Unicode, ENCODING_APPLE_ID_VARIANT_SELECTOR) =
             (rec.platform_id(), rec.encoding_id())
         {
             if let Ok(CmapSubtable::Format14(subtable)) = rec.subtable(cmap.offset_data()) {
-                return Some(subtable);
+                return Some((subtable, i as u16));
             }
         }
     }

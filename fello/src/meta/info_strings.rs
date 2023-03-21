@@ -1,3 +1,7 @@
+/*! Strings describing font names and other metadata in multiple languages.
+
+*/
+
 use read_fonts::{
     tables::name::{CharIter, Name, NameRecord, NameString},
     TableProvider,
@@ -5,150 +9,7 @@ use read_fonts::{
 
 use core::fmt;
 
-/// Identifier for a localized string.
-///
-/// A set of pre-defined identifiers exist for accessing names and other various metadata
-/// about the font and those are provided as associated constants on this type.
-///
-/// IDs 26 to 255, inclusive, are reserved for future standard names. IDs 256 to 32767,
-/// inclusive, are reserved for font-specific names such as those referenced by a font’s
-/// layout features.
-///
-/// For more detail, see <https://learn.microsoft.com/en-us/typography/opentype/spec/name#name-ids>
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub struct StringId(pub u16);
-
-impl StringId {
-    /// Copyright notice.
-    pub const COPYRIGHT_NOTICE: Self = Self(0);
-
-    /// Font Family name. The Font Family name is used in combination with Font Subfamily name (name ID 2),
-    /// and should be shared among at most four fonts that differ only in weight or style (as described below).
-    pub const FAMILY_NAME: Self = Self(1);
-
-    /// Font Subfamily name. The Font Subfamily name is used in combination with Font Family name (name ID 1),
-    /// and distinguishes the fonts in a group with the same Font Family name. This should be used for style
-    /// and weight variants only (as described below).
-    pub const SUBFAMILY_NAME: Self = Self(2);
-
-    /// Unique font identifier.
-    pub const UNIQUE_ID: Self = Self(3);
-
-    /// Full font name that reflects all family and relevant subfamily descriptors. The full font name is generally
-    /// a combination of name IDs 1 and 2, or of name IDs 16 and 17, or a similar human-readable variant.
-    pub const FULL_NAME: Self = Self(4);
-
-    /// Version string. Should begin with the syntax “Version number.number” (upper case, lower case, or mixed,
-    /// with a space between “Version” and the number).
-    pub const VERSION_STRING: Self = Self(5);
-
-    /// PostScript name for the font; Name ID 6 specifies a string which is used to invoke a PostScript language font
-    /// that corresponds to this OpenType font. When translated to ASCII, the name string must be no longer than 63
-    /// characters and restricted to the printable ASCII subset, codes 33 to 126, except for the 10 characters '[', ']',
-    /// '(', ')', '{', '}', '<', '>', '/', '%'.
-    pub const POSTSCRIPT_NAME: Self = Self(6);
-
-    /// Trademark; this is used to save any trademark notice/information for this font. Such information should be based
-    /// on legal advice. This is distinctly separate from the copyright.
-    pub const TRADEMARK: Self = Self(7);
-
-    /// Manufacturer name.
-    pub const MANUFACTURER: Self = Self(8);
-
-    /// Designer; name of the designer of the typeface.
-    pub const DESIGNER: Self = Self(9);
-
-    /// Description; description of the typeface. Can contain revision information, usage recommendations, history, features, etc.
-    pub const DESCRIPTION: Self = Self(10);
-
-    /// URL Vendor; URL of font vendor (with protocol, e.g., http://, ftp://). If a unique serial number is embedded in the URL,
-    /// it can be used to register the font.
-    pub const VENDOR_URL: Self = Self(11);
-
-    /// URL Designer; URL of typeface designer (with protocol, e.g., http://, ftp://).
-    pub const DESIGNER_URL: Self = Self(12);
-
-    /// License Description; description of how the font may be legally used, or different example scenarios for licensed use.
-    /// This field should be written in plain language, not legalese.
-    pub const LICENSE_DESCRIPTION: Self = Self(13);
-
-    /// URL where additional licensing information can be found.
-    pub const LICENSE_URL: Self = Self(14);
-
-    /// Typographic Family name: The typographic family grouping doesn’t impose any constraints on the number of faces within it,
-    /// in contrast with the 4-style family grouping (ID 1), which is present both for historical reasons and to express style
-    /// linking groups.
-    pub const TYPOGRAPHIC_FAMILY_NAME: Self = Self(16);
-
-    /// Typographic Subfamily name: This allows font designers to specify a subfamily name within the typographic family grouping.
-    /// This string must be unique within a particular typographic family.
-    pub const TYPOGRAPHIC_SUBFAMILY_NAME: Self = Self(17);
-
-    /// Compatible Full (Macintosh only); On the Macintosh, the menu name is constructed using the FOND resource. This usually matches
-    /// the Full Name. If you want the name of the font to appear differently than the Full Name, you can insert the Compatible Full
-    /// Name in ID 18.
-    pub const COMPATIBLE_FULL_NAME: Self = Self(18);
-
-    /// Sample text; This can be the font name, or any other text that the designer thinks is the best sample to display the font in.
-    pub const SAMPLE_TEXT: Self = Self(19);
-
-    /// PostScript CID findfont name; Its presence in a font means that the nameID 6 holds a PostScript font name that is meant to be
-    /// used with the “composefont” invocation in order to invoke the font in a PostScript interpreter.
-    pub const POSTSCRIPT_CID_NAME: Self = Self(20);
-
-    /// WWS Family Name. Used to provide a WWS-conformant family name in case the entries for IDs 16 and 17 do not conform to the WWS model.
-    pub const WWS_FAMILY_NAME: Self = Self(21);
-
-    /// WWS Subfamily Name. Used in conjunction with ID 21, this ID provides a WWS-conformant subfamily name (reflecting only weight, width
-    /// and slope attributes) in case the entries for IDs 16 and 17 do not conform to the WWS model.
-    pub const WWS_SUBFAMILY_NAME: Self = Self(22);
-
-    /// Light Background Palette. This ID, if used in the CPAL table’s Palette Labels Array, specifies that the corresponding color palette in
-    /// the CPAL table is appropriate to use with the font when displaying it on a light background such as white.
-    pub const LIGHT_BACKGROUND_PALETTE: Self = Self(23);
-
-    /// Dark Background Palette. This ID, if used in the CPAL table’s Palette Labels Array, specifies that the corresponding color palette in
-    /// the CPAL table is appropriate to use with the font when displaying it on a dark background such as black.
-    pub const DARK_BACKGROUND_PALETTE: Self = Self(24);
-
-    /// Variations PostScript Name Prefix. If present in a variable font, it may be used as the family prefix in the PostScript Name Generation
-    /// for Variation Fonts algorithm.
-    pub const VARIATIONS_POSTSCRIPT_NAME_PREFIX: Self = Self(25);
-}
-
-impl fmt::Debug for StringId {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let name = match *self {
-            Self::COPYRIGHT_NOTICE => "COPYRIGHT_NOTICE",
-            Self::FAMILY_NAME => "FAMILY_NAME",
-            Self::SUBFAMILY_NAME => "SUBFAMILY_NAME",
-            Self::UNIQUE_ID => "UNIQUE_ID",
-            Self::FULL_NAME => "FULL_NAME",
-            Self::VERSION_STRING => "VERSION_STRING",
-            Self::POSTSCRIPT_NAME => "POSTSCRIPT_NAME",
-            Self::TRADEMARK => "TRADEMARK",
-            Self::MANUFACTURER => "MANUFACTURER",
-            Self::DESIGNER => "DESIGNER",
-            Self::DESCRIPTION => "DESCRIPTION",
-            Self::VENDOR_URL => "VENDOR_URL",
-            Self::DESIGNER_URL => "DESIGNER_URL",
-            Self::LICENSE_DESCRIPTION => "LICENSE_DESCRIPTION",
-            Self::LICENSE_URL => "LICENSE_URL",
-            Self::TYPOGRAPHIC_FAMILY_NAME => "TYPOGRAPHIC_FAMILY_NAME",
-            Self::TYPOGRAPHIC_SUBFAMILY_NAME => "TYPOGRAPHIC_SUBFAMILY_NAME",
-            Self::COMPATIBLE_FULL_NAME => "COMPATIBLE_FULL_NAME",
-            Self::SAMPLE_TEXT => "SAMPLE_TEXT",
-            Self::POSTSCRIPT_CID_NAME => "POSTSCRIPT_CID_NAME",
-            Self::WWS_FAMILY_NAME => "WWS_FAMILY_NAME",
-            Self::WWS_SUBFAMILY_NAME => "WWS_SUBFAMILY_NAME",
-            Self::LIGHT_BACKGROUND_PALETTE => "LIGHT_BACKGROUND_PALETTE",
-            Self::DARK_BACKGROUND_PALETTE => "DARK_BACKGROUND_PALETTE",
-            Self::VARIATIONS_POSTSCRIPT_NAME_PREFIX => "VARIATIONS_POSTSCRIPT_NAME_PREFIX",
-            _ => return write!(f, "LocalizedStringId({})", self.0),
-        };
-        f.write_str(name)
-    }
-}
+pub type StringId = read_fonts::types::NameId;
 
 /// String containing a name or other font metadata in a specific language.
 #[derive(Clone)]
@@ -166,11 +27,11 @@ impl<'a> LocalizedString<'a> {
     ///
     /// For a full description, see <https://learn.microsoft.com/en-us/typography/opentype/spec/name#name-ids>
     pub fn id(&self) -> StringId {
-        StringId(self.record.name_id())
+        self.record.name_id()
     }
 
     /// Returns the language for this string.
-    pub fn language(&self) -> Option<EncodedString<'a>> {
+    pub fn language(&self) -> Option<Encoded<'a>> {
         let id = self.record.language_id();
         // For version 1 name tables, prefer language tags:
         // https://learn.microsoft.com/en-us/typography/opentype/spec/name#naming-table-version-1
@@ -182,16 +43,16 @@ impl<'a> LocalizedString<'a> {
                 .get(index)?
                 .lang_tag(self.name.string_data())
                 .ok()?;
-            EncodedStringInner::Encoded(language)
+            EncodedInner::Encoded(language)
         } else {
-            EncodedStringInner::Str(language_id_to_bcp47(id)?)
+            EncodedInner::Str(language_id_to_bcp47(id)?)
         };
-        Some(EncodedString(inner))
+        Some(Encoded(inner))
     }
 
     /// Returns the encoded string.
-    pub fn string(&self) -> Option<EncodedString<'a>> {
-        Some(EncodedString(EncodedStringInner::Encoded(
+    pub fn string(&self) -> Option<Encoded<'a>> {
+        Some(Encoded(EncodedInner::Encoded(
             self.record.string(self.name.string_data()).ok()?,
         )))
     }
@@ -199,29 +60,64 @@ impl<'a> LocalizedString<'a> {
 
 /// Representation of the encoded data in a localized string.
 #[derive(Clone)]
-pub struct EncodedString<'a>(EncodedStringInner<'a>);
+pub struct Encoded<'a>(EncodedInner<'a>);
 
 #[derive(Clone)]
-enum EncodedStringInner<'a> {
+enum EncodedInner<'a> {
     Str(&'a str),
     Encoded(NameString<'a>),
 }
 
-impl<'a> EncodedString<'a> {
+impl<'a> Encoded<'a> {
     /// Returns an iterator over the sequence of characters in the string.
-    pub fn chars(&self) -> impl Iterator<Item = char> + 'a {
+    pub fn chars(&self) -> Chars<'a> {
         let inner = match &self.0 {
-            EncodedStringInner::Str(s) => CharsInner::Str(s.chars()),
-            EncodedStringInner::Encoded(s) => CharsInner::Encoded(s.chars()),
+            EncodedInner::Str(s) => CharsInner::Str(s.chars()),
+            EncodedInner::Encoded(s) => CharsInner::Encoded(s.chars()),
         };
         Chars { inner }
     }
 }
 
-struct Chars<'a> {
+impl PartialEq for Encoded<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.chars().eq(other.chars())
+    }
+}
+
+impl Eq for Encoded<'_> {}
+
+impl PartialOrd for Encoded<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.chars().cmp(other.chars()))
+    }
+}
+
+impl Ord for Encoded<'_> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.chars().cmp(other.chars())
+    }
+}
+
+impl PartialEq<&str> for Encoded<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        self.chars().eq(other.chars())
+    }
+}
+
+impl PartialOrd<&str> for Encoded<'_> {
+    fn partial_cmp(&self, other: &&str) -> Option<core::cmp::Ordering> {
+        Some(self.chars().cmp(other.chars()))
+    }
+}
+
+#[derive(Clone)]
+/// Iterator over the characters of an encoded string.
+pub struct Chars<'a> {
     inner: CharsInner<'a>,
 }
 
+#[derive(Clone)]
 enum CharsInner<'a> {
     Str(core::str::Chars<'a>),
     Encoded(CharIter<'a>),
@@ -238,13 +134,13 @@ impl<'a> Iterator for Chars<'a> {
     }
 }
 
-/// Collection of localized strings.
+/// Collection of informational strings.
 #[derive(Clone)]
-pub struct LocalizedStringList<'a> {
+pub struct InfoStrings<'a> {
     name: Option<Name<'a>>,
 }
 
-impl<'a> LocalizedStringList<'a> {
+impl<'a> InfoStrings<'a> {
     /// Creates a new localized string collection from the specified table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         Self {
@@ -273,18 +169,19 @@ impl<'a> LocalizedStringList<'a> {
     }
 
     /// Returns an iterator over the localized strings in the collection.
-    pub fn iter(&self) -> impl Iterator<Item = LocalizedString<'a>> + 'a + Clone {
+    pub fn iter(&self) -> Iter<'a> {
         self.clone().into_iter()
     }
 }
 
+/// Iterator over a collection of informational strings.
 #[derive(Clone)]
-pub struct LocalizedStringIter<'a> {
-    strings: LocalizedStringList<'a>,
+pub struct Iter<'a> {
+    strings: InfoStrings<'a>,
     pos: usize,
 }
 
-impl<'a> Iterator for LocalizedStringIter<'a> {
+impl<'a> Iterator for Iter<'a> {
     type Item = LocalizedString<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -294,12 +191,12 @@ impl<'a> Iterator for LocalizedStringIter<'a> {
     }
 }
 
-impl<'a> IntoIterator for LocalizedStringList<'a> {
-    type IntoIter = LocalizedStringIter<'a>;
+impl<'a> IntoIterator for InfoStrings<'a> {
+    type IntoIter = Iter<'a>;
     type Item = LocalizedString<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        LocalizedStringIter {
+        Iter {
             strings: self,
             pos: 0,
         }

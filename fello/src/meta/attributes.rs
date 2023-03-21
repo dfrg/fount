@@ -1,4 +1,66 @@
+/*! Attributes describing the stretch, style and weight of a font.
+
+*/
+
 use read_fonts::TableProvider;
+
+/// Stretch, style and weight attributes of a font.
+#[derive(Copy, Clone, PartialEq, Debug, Default)]
+pub struct Attributes {
+    pub stretch: Stretch,
+    pub style: Style,
+    pub weight: Weight,
+}
+
+impl Attributes {
+    /// Extracts the stretch, style and weight attributes from the given font.
+    pub fn new<'a>(font: &impl TableProvider<'a>) -> Self {
+        let mut stretch = Stretch::default();
+        let mut style = Style::default();
+        let mut weight = Weight::default();
+        if let Ok(os2) = font.os2() {
+            weight = Weight(os2.us_weight_class().clamp(1, 1000) as f32);
+            stretch = match os2.us_width_class() {
+                1 => Stretch::ULTRA_CONDENSED,
+                2 => Stretch::EXTRA_CONDENSED,
+                3 => Stretch::CONDENSED,
+                4 => Stretch::SEMI_CONDENSED,
+                5 => Stretch::NORMAL,
+                6 => Stretch::SEMI_EXPANDED,
+                7 => Stretch::EXPANDED,
+                8 => Stretch::EXTRA_EXPANDED,
+                9 => Stretch::ULTRA_EXPANDED,
+                _ => Stretch::NORMAL,
+            };
+            const FS_SELECTION_ITALIC: u16 = 1;
+            const FS_SELECTION_OBLIQUE: u16 = 1 << 9;
+            let fs_selection = os2.fs_selection();
+            if fs_selection & FS_SELECTION_ITALIC != 0 {
+                style = Style::Italic;
+            } else if fs_selection & FS_SELECTION_OBLIQUE != 0 {
+                let angle = font
+                    .post()
+                    .map(|post| post.italic_angle().to_f64() as f32)
+                    .ok();
+                style = Style::Oblique(angle);
+            }
+        } else if let Ok(head) = font.head() {
+            const MAC_STYLE_BOLD: u16 = 1;
+            const MAC_STYLE_ITALIC: u16 = 2;
+            if head.mac_style() & MAC_STYLE_BOLD != 0 {
+                weight = Weight::BOLD;
+            }
+            if head.mac_style() & MAC_STYLE_ITALIC != 0 {
+                style = Style::Italic;
+            }
+        }
+        Self {
+            stretch,
+            style,
+            weight,
+        }
+    }
+}
 
 /// Visual width of a font-- a relative change from the normal aspect
 /// ratio from 0.5 to 2.0.
@@ -94,47 +156,4 @@ impl Default for Weight {
     fn default() -> Self {
         Self::NORMAL
     }
-}
-
-pub fn from_font<'a>(font: &impl TableProvider<'a>) -> (Stretch, Style, Weight) {
-    let mut stretch = Stretch::default();
-    let mut style = Style::default();
-    let mut weight = Weight::default();
-    if let Ok(os2) = font.os2() {
-        weight = Weight(os2.us_weight_class().clamp(1, 1000) as f32);
-        stretch = match os2.us_width_class() {
-            1 => Stretch::ULTRA_CONDENSED,
-            2 => Stretch::EXTRA_CONDENSED,
-            3 => Stretch::CONDENSED,
-            4 => Stretch::SEMI_CONDENSED,
-            5 => Stretch::NORMAL,
-            6 => Stretch::SEMI_EXPANDED,
-            7 => Stretch::EXPANDED,
-            8 => Stretch::EXTRA_EXPANDED,
-            9 => Stretch::ULTRA_EXPANDED,
-            _ => Stretch::NORMAL,
-        };
-        const FS_SELECTION_ITALIC: u16 = 1;
-        const FS_SELECTION_OBLIQUE: u16 = 1 << 9;
-        let fs_selection = os2.fs_selection();
-        if fs_selection & FS_SELECTION_ITALIC != 0 {
-            style = Style::Italic;
-        } else if fs_selection & FS_SELECTION_OBLIQUE != 0 {
-            let angle = font
-                .post()
-                .map(|post| post.italic_angle().to_f64() as f32)
-                .ok();
-            style = Style::Oblique(angle);
-        }
-    } else if let Ok(head) = font.head() {
-        const MAC_STYLE_BOLD: u16 = 1;
-        const MAC_STYLE_ITALIC: u16 = 2;
-        if head.mac_style() & MAC_STYLE_BOLD != 0 {
-            weight = Weight::BOLD;
-        }
-        if head.mac_style() & MAC_STYLE_ITALIC != 0 {
-            style = Style::Italic;
-        }
-    }
-    (stretch, style, weight)
 }

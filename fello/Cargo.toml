@@ -1,0 +1,25 @@
+[package]
+name = "fello"
+version = "0.1.0"
+edition = "2021"
+license = "MIT/Apache-2.0"
+description = "Metadata and glyph loading for OpenType fonts."
+repository = "https://github.com/dfrg/fount"
+readme = "README.md"
+categories = ["text-processing", "parsing", "graphics"]
+publish = false
+
+[features]
+default = ["scale", "hinting"]
+scale = []
+hinting = []
+
+[dependencies]
+read-fonts = { git = "https://github.com/googlefonts/fontations", default-features = false }
+
+[dev-dependencies]
+read-fonts = { git = "https://github.com/googlefonts/fontations", features = ["test_data"] }
+
+# cargo-release settings
+[package.metadata.release]
+release = false
