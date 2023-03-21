@@ -3,6 +3,7 @@
 */
 
 use read_fonts::{
+    tables::avar::Avar,
     tables::fvar::{self, Fvar},
     types::{Fixed, Tag},
     TableProvider,
@@ -71,13 +72,15 @@ impl Axis {
 #[derive(Clone)]
 pub struct Axes<'a> {
     fvar: Option<Fvar<'a>>,
+    avar: Option<Avar<'a>>,
 }
 
 impl<'a> Axes<'a> {
     /// Creates a new axis collection from the given table provider.
     pub fn new(font: &impl TableProvider<'a>) -> Self {
         let fvar = font.fvar().ok();
-        Self { fvar }
+        let avar = font.avar().ok();
+        Self { fvar, avar }
     }
 
     /// Returns the number of variation axes in the collection.
@@ -113,6 +116,7 @@ impl<'a> Axes<'a> {
         I::IntoIter: 'a + Clone,
         I::Item: Into<VariationSetting>,
     {
+        let avar_mappings = self.avar.as_ref().map(|avar| avar.axis_segment_maps());
         let mut storage = CoordStorage::new(self.len());
         let coords = storage.coords_mut();
         for setting in settings.into_iter() {
@@ -122,7 +126,14 @@ impl<'a> Axes<'a> {
                 .enumerate()
                 .filter(|v| v.1.tag() == setting.selector)
             {
-                coords[i] = axis.normalize(setting.value);
+                let coord = axis.record.normalize(Fixed::from_f64(setting.value as f64));
+                let coord = avar_mappings
+                    .as_ref()
+                    .and_then(|mappings| mappings.get(i).transpose().ok())
+                    .flatten()
+                    .map(|mapping| mapping.apply(coord))
+                    .unwrap_or(coord);
+                coords[i] = coord.to_f2dot14();
             }
         }
         Normalize { storage, pos: 0 }
