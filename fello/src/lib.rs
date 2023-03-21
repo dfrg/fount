@@ -120,6 +120,16 @@ impl Size {
     }
 }
 
+/// Key for identifying a font in various internal caches.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Default, Debug)]
+pub struct FontKey {
+    /// Unique identifier for the data blob containing the content of
+    /// a font file.
+    pub data_id: u64,
+    /// Index of a font in a font collection file.
+    pub index: u32,
+}
+
 /// Type for a glyph identifier.
 pub type GlyphId = read_fonts::types::GlyphId;
 
