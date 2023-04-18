@@ -1,4 +1,4 @@
-use crate::FontKey;
+use crate::font::UniqueId;
 
 use super::{
     super::{Error, NormalizedCoord, Result, GLYF_COMPOSITE_RECURSION_LIMIT},
@@ -46,7 +46,7 @@ impl<'a> Scaler<'a> {
     pub fn new(
         context: &'a mut Context,
         font: &impl TableProvider<'a>,
-        cache_key: Option<FontKey>,
+        cache_key: Option<UniqueId>,
         size: f32,
         #[cfg(feature = "hinting")] hinting: Option<Hinting>,
         coords: &'a [NormalizedCoord],
@@ -547,7 +547,7 @@ impl<'a> Scaler<'a> {
 /// table references for loading, scaling and hinting a glyph outline.
 #[derive(Clone)]
 pub struct ScalerFont<'a> {
-    pub key: Option<FontKey>,
+    pub key: Option<UniqueId>,
     pub is_scaled: bool,
     pub ppem: u16,
     pub scale: F26Dot6,
@@ -574,7 +574,7 @@ pub struct ScalerFont<'a> {
 impl<'a> ScalerFont<'a> {
     fn new(
         font: &impl TableProvider<'a>,
-        key: Option<FontKey>,
+        key: Option<UniqueId>,
         size: f32,
         coords: &'a [NormalizedCoord],
     ) -> Result<Self> {

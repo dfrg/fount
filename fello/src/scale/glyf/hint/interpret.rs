@@ -1,4 +1,4 @@
-use crate::{scale::Hinting, NormalizedCoord};
+use crate::{instance::NormalizedCoord, scale::Hinting};
 use read_fonts::tables::glyf::{PointFlags, PointMarker};
 
 use super::bytecode::{opcodes as op, DecodeError, Decoder, Definition, Program};

@@ -1,5 +1,4 @@
-use super::{glyf, Context, Error, NormalizedCoord, Pen, Result};
-use crate::{meta::variations::VariationSetting, FontKey, Size};
+use super::{glyf, Context, Error, NormalizedCoord, Pen, Result, Size, UniqueId, VariationSetting};
 
 #[cfg(feature = "hinting")]
 use super::Hinting;
@@ -11,9 +10,12 @@ use read_fonts::{
 };
 
 /// Builder for configuring a glyph scaler.
+///
+/// See the [module level documentation](crate::scale#building-a-scaler)
+/// for more detail.
 pub struct ScalerBuilder<'a> {
     context: &'a mut Context,
-    key: Option<FontKey>,
+    cache_key: Option<UniqueId>,
     size: Size,
     #[cfg(feature = "hinting")]
     hint: Option<Hinting>,
@@ -26,7 +28,7 @@ impl<'a> ScalerBuilder<'a> {
         context.variations.clear();
         Self {
             context,
-            key: None,
+            cache_key: None,
             size: Size::unscaled(),
             #[cfg(feature = "hinting")]
             hint: None,
@@ -35,8 +37,8 @@ impl<'a> ScalerBuilder<'a> {
 
     /// Sets a unique font identifier for hint state caching. Specifying `None` will
     /// disable caching.
-    pub fn key(mut self, key: Option<FontKey>) -> Self {
-        self.key = key;
+    pub fn cache_key(mut self, key: Option<UniqueId>) -> Self {
+        self.cache_key = key;
         self
     }
 
@@ -61,7 +63,7 @@ impl<'a> ScalerBuilder<'a> {
     /// Specifies a variation with a set of normalized coordinates.
     ///
     /// This will clear any variations specified with the variations method.
-    pub fn coords<I>(self, coords: I) -> Self
+    pub fn normalized_coords<I>(self, coords: I) -> Self
     where
         I: IntoIterator,
         I::Item: Borrow<NormalizedCoord>,
@@ -74,9 +76,36 @@ impl<'a> ScalerBuilder<'a> {
         self
     }
 
-    /// Adds the sequence of variation settings. This will clear any variations
-    /// specified as normalized coordinates.
-    pub fn variations<I>(self, variations: I) -> Self
+    /// Appends the given sequence of variation settings. This will clear any
+    /// variations specified as normalized coordinates.
+    ///
+    /// This methods accepts any type which can be converted into an iterator
+    /// that yields a sequence of values that are convertible to
+    /// [`VariationSetting`]. Various conversions from tuples are provided.
+    ///
+    /// The following are all equivalent:
+    ///
+    /// ```
+    /// # use skrifa::{scale::*, setting::VariationSetting, Tag};
+    /// # let mut context = Context::new();
+    /// # let builder = context.new_scaler();
+    /// // slice of VariationSetting
+    /// builder.variation_settings(&[
+    ///     VariationSetting::new(Tag::new(b"wgth"), 720.0),
+    ///     VariationSetting::new(Tag::new(b"wdth"), 50.0),
+    /// ])
+    /// # ; let builder = context.new_scaler();
+    /// // slice of (Tag, f32)
+    /// builder.variation_settings(&[(Tag::new(b"wght"), 720.0), (Tag::new(b"wdth"), 50.0)])
+    /// # ; let builder = context.new_scaler();
+    /// // slice of (&str, f32)
+    /// builder.variation_settings(&[("wght", 720.0), ("wdth", 50.0)])
+    /// # ;
+    ///
+    /// ```
+    ///
+    /// Iterators that yield the above types are also accepted.
+    pub fn variation_settings<I>(self, settings: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<VariationSetting>,
@@ -84,7 +113,7 @@ impl<'a> ScalerBuilder<'a> {
         self.context.coords.clear();
         self.context
             .variations
-            .extend(variations.into_iter().map(|v| v.into()));
+            .extend(settings.into_iter().map(|v| v.into()));
         self
     }
 
@@ -96,7 +125,7 @@ impl<'a> ScalerBuilder<'a> {
         let glyf = if let Ok(glyf) = glyf::Scaler::new(
             &mut self.context.glyf,
             font,
-            self.key,
+            self.cache_key,
             self.size.ppem().unwrap_or_default(),
             #[cfg(feature = "hinting")]
             self.hint,
@@ -153,6 +182,9 @@ impl<'a> ScalerBuilder<'a> {
 }
 
 /// Glyph scaler for a specific font and configuration.
+///
+/// See the [module level documentation](crate::scale#getting-an-outline)
+/// for more detail.
 pub struct Scaler<'a> {
     coords: &'a [NormalizedCoord],
     outlines: Outlines<'a>,

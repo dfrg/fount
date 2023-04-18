@@ -1,26 +1,24 @@
-/*! Generic type for selecting features and variations.
+//! Definitions for specifying variations and typographic features.
 
-*/
-
-use read_fonts::types::Tag;
-
+use super::Tag;
 use core::str::FromStr;
 
 /// Setting defined by a selector tag and an associated value.
 ///
-/// The general structure of (tag, value) pairs is used to specify both
-/// variations and features.
+/// This type is a generic container for properties that can be activated
+/// or defined by a `(Tag, T)` pair where the tag selects the target
+/// setting and the generic value of type `T` specifies the value for that
+/// setting.
 ///
-/// In the case of variations, the selector tag chooses a variation axis
-/// and the value defines the position on that axis in user space
-/// coordinates.
+/// ## Usage
+/// Current usage is for specifying variation axis settings (similar to the
+/// CSS property [font-variation-settings](https://developer.mozilla.org/en-US/docs/Web/CSS/font-variation-settings)).
+/// See [`VariationSetting`].
 ///
-/// For features, the selector specifies a
-/// [feature tag](https://learn.microsoft.com/en-us/typography/opentype/spec/featuretags)
-/// and the value can have one of two meanings. Most features, such as `liga`, can be toggled,
-/// and are enabled or disabled by a non-zero or zero value, respectively. Features like
-/// `aalt` use the value as an index to select an alternate glyph from a set.  
-#[derive(Copy, Clone, Debug)]
+/// In the future, this will likely also be used for specifying feature settings
+/// (analogous to the CSS property [font-feature-settings](https://developer.mozilla.org/en-US/docs/Web/CSS/font-feature-settings))
+/// for selecting OpenType [features](https://learn.microsoft.com/en-us/typography/opentype/spec/featuretags).
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Setting<T> {
     /// Tag that specifies the target setting.
     pub selector: Tag,
@@ -28,8 +26,33 @@ pub struct Setting<T> {
     pub value: T,
 }
 
+impl<T> Setting<T> {
+    /// Creates a new setting from the given selector tag and its associated
+    /// value.
+    pub fn new(selector: Tag, value: T) -> Self {
+        Self { selector, value }
+    }
+}
+
+// This is provided so that &[VariationSetting] can be passed to the
+// variation_settings() method of ScalerBuilder.
+impl<T: Copy> From<&'_ Setting<T>> for Setting<T> {
+    fn from(value: &'_ Setting<T>) -> Self {
+        *value
+    }
+}
+
 impl<T> From<(Tag, T)> for Setting<T> {
     fn from(s: (Tag, T)) -> Self {
+        Self {
+            selector: s.0,
+            value: s.1,
+        }
+    }
+}
+
+impl<T: Copy> From<&(Tag, T)> for Setting<T> {
+    fn from(s: &(Tag, T)) -> Self {
         Self {
             selector: s.0,
             value: s.1,
@@ -46,11 +69,29 @@ impl<T> From<(&str, T)> for Setting<T> {
     }
 }
 
-impl<T> From<([u8; 4], T)> for Setting<T> {
-    fn from(s: ([u8; 4], T)) -> Self {
+impl<T: Copy> From<&(&str, T)> for Setting<T> {
+    fn from(s: &(&str, T)) -> Self {
         Self {
-            selector: Tag::new_checked(&s.0[..]).unwrap_or_default(),
+            selector: Tag::from_str(s.0).unwrap_or_default(),
             value: s.1,
         }
     }
 }
+
+/// Type for specifying a variation axis setting in user coordinates.
+///
+/// The `selector` field should contain a tag that corresponds to a
+/// variation axis while the `value` field specifies the desired position
+/// on the axis in user coordinates (i.e. within the range defined by
+/// the mininum and maximum values of the axis).
+///
+/// # Example
+/// ```
+/// use skrifa::{Tag, setting::VariationSetting};
+///
+/// // For convenience, a conversion from (&str, f32) is provided.
+/// let slightly_bolder: VariationSetting = ("wght", 720.0).into();
+///
+/// assert_eq!(slightly_bolder, VariationSetting::new(Tag::new(b"wght"), 720.0));
+/// ```
+pub type VariationSetting = Setting<f32>;

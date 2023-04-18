@@ -1,5 +1,5 @@
 use super::{bytecode::Definition, state::InstanceState, ScalerFont, Slot};
-use crate::{scale::Hinting, FontKey, NormalizedCoord};
+use crate::{font::UniqueId, instance::NormalizedCoord, scale::Hinting};
 
 pub struct CacheEntry<'a, T> {
     pub is_current: bool,
@@ -57,7 +57,7 @@ impl Cache {
             &mut self.sizes[size_index]
         };
         if !font_current {
-            font_entry.key = font.key.unwrap_or_default();
+            font_entry.key = font.key;
             font_entry.epoch = epoch;
             font_entry.definitions.clear();
             font_entry.definitions.resize(
@@ -69,7 +69,7 @@ impl Cache {
         }
         font_entry.epoch = epoch;
         if !size_current {
-            size_entry.key = font.key.unwrap_or_default();
+            size_entry.key = font.key;
             size_entry.state = InstanceState::default();
             size_entry.mode = hinting;
             size_entry.scale = font.scale.to_bits();
@@ -113,7 +113,7 @@ impl Cache {
         }
     }
 
-    fn find_font(&mut self, font_id: Option<FontKey>) -> (bool, usize) {
+    fn find_font(&mut self, font_id: Option<UniqueId>) -> (bool, usize) {
         let font_id = match font_id {
             Some(font_id) => font_id,
             None => return (false, !0),
@@ -121,7 +121,7 @@ impl Cache {
         let mut lowest_epoch = self.epoch;
         let mut lowest_index = 0;
         for (i, font) in self.fonts.iter().enumerate() {
-            if font.key == font_id {
+            if font.key == Some(font_id) {
                 return (true, i);
             }
             if font.epoch < lowest_epoch {
@@ -138,7 +138,7 @@ impl Cache {
 
     fn find_size(
         &mut self,
-        font_id: Option<FontKey>,
+        font_id: Option<UniqueId>,
         coords: &[NormalizedCoord],
         scale: i32,
         mode: Hinting,
@@ -155,7 +155,7 @@ impl Cache {
                 lowest_epoch = size.epoch;
                 lowest_index = i;
             }
-            if size.key == font_id
+            if size.key == Some(font_id)
                 && size.scale == scale
                 && size.mode == mode
                 && (!vary || (coords == &size.coords[..]))
@@ -174,7 +174,7 @@ impl Cache {
 /// Entry for a cached font.
 #[derive(Clone, Default, Debug)]
 pub struct FontEntry {
-    pub key: FontKey,
+    pub key: Option<UniqueId>,
     pub definitions: Vec<Definition>,
     pub max_fdefs: usize,
     pub cvt_len: usize,
@@ -184,7 +184,7 @@ pub struct FontEntry {
 /// Entry for a cached font size (and variation).
 #[derive(Clone, Default, Debug)]
 pub struct SizeEntry {
-    pub key: FontKey,
+    pub key: Option<UniqueId>,
     pub state: InstanceState,
     pub mode: Hinting,
     pub coords: Vec<NormalizedCoord>,

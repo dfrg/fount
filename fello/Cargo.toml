@@ -15,10 +15,10 @@ scale = []
 hinting = []
 
 [dependencies]
-read-fonts = { git = "https://github.com/googlefonts/fontations", rev = "49cfbd9" }
+read-fonts = { git = "https://github.com/googlefonts/fontations", rev = "4440a14" }
 
 [dev-dependencies]
-read-fonts = { git = "https://github.com/googlefonts/fontations", rev = "49cfbd9", features = ["test_data"] }
+read-fonts = { git = "https://github.com/googlefonts/fontations", rev = "4440a14", features = ["test_data"] }
 
 # cargo-release settings
 [package.metadata.release]
