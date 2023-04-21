@@ -1,4 +1,7 @@
-use super::{glyf, Context, Error, NormalizedCoord, Pen, Result, Size, UniqueId, VariationSetting};
+use super::{
+    color::{self, ColorPen},
+    colr, glyf, Context, Error, NormalizedCoord, Pen, Result, Size, UniqueId, VariationSetting,
+};
 
 #[cfg(feature = "hinting")]
 use super::Hinting;
@@ -135,9 +138,15 @@ impl<'a> ScalerBuilder<'a> {
         } else {
             None
         };
+        let color = match (font.colr(), font.cpal()) {
+            (Ok(colr), Ok(cpal)) => Some((colr, cpal)),
+            _ => None,
+        };
         Scaler {
             coords,
             outlines: Outlines { glyf },
+            color_context: &mut self.context.colr,
+            color,
         }
     }
 
@@ -188,6 +197,8 @@ impl<'a> ScalerBuilder<'a> {
 pub struct Scaler<'a> {
     coords: &'a [NormalizedCoord],
     outlines: Outlines<'a>,
+    color_context: &'a mut colr::Context,
+    color: Option<(colr::Colr<'a>, colr::Cpal<'a>)>,
 }
 
 impl<'a> Scaler<'a> {
@@ -205,6 +216,23 @@ impl<'a> Scaler<'a> {
     /// in the given sink for the sequence of path commands that define the outline.
     pub fn outline(&mut self, glyph_id: GlyphId, sink: &mut impl Pen) -> Result<()> {
         self.outlines.outline(glyph_id, sink)
+    }
+
+    /// Returns if the scaler has a source for color outlines.
+    pub fn has_color_outlines(&self) -> bool {
+        self.color.is_some()
+    }
+
+    pub fn color_outline(&mut self, glyph_id: GlyphId, pen: &mut impl ColorPen) -> Result<()> {
+        if let Some((colr, cpal)) = self.color.as_ref() {
+            self.color_context.load(
+                glyph_id,
+                |gid, pen| self.outlines.outline(glyph_id, pen),
+                pen,
+            )
+        } else {
+            Err(Error::NoSources)
+        }
     }
 }
 

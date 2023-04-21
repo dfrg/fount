@@ -4,6 +4,7 @@ use super::{
     instance::{LocationRef, NormalizedCoord, Size},
     metrics::{GlyphMetrics, Metrics},
     string::{LocalizedStrings, StringId},
+    variation::{Axes, NamedInstances},
 };
 
 /// Interface for types that can provide font metadata.
@@ -12,6 +13,16 @@ pub trait MetadataProvider<'a>: raw::TableProvider<'a> + Sized {
     /// style and weight.
     fn attributes(&self) -> Attributes {
         Attributes::new(self)
+    }
+
+    /// Returns the collection of variation axes.
+    fn axes(&self) -> Axes<'a> {
+        Axes::new(self)
+    }
+
+    /// Returns the collection of named variation instances.
+    fn named_instances(&self) -> NamedInstances<'a> {
+        NamedInstances::new(self)
     }
 
     /// Returns an iterator over the collection of localized strings for the

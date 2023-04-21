@@ -144,16 +144,18 @@
 //! [lyon](https://github.com/nical/lyon) or
 //! [pathfinder](https://github.com/servo/pathfinder) for GPU rendering.
 
+pub mod colr;
+// This will go away in the future when we add tracing support. Hide it
+// for now.
 mod error;
+#[doc(hidden)]
+pub mod glyf;
+mod path;
 mod scaler;
+mod transform;
 
 #[cfg(test)]
 mod test;
-
-// This will go away in the future when we add tracing support. Hide it
-// for now.
-#[doc(hidden)]
-pub mod glyf;
 
 pub mod color;
 
@@ -208,6 +210,8 @@ pub struct Context {
     glyf: glyf::Context,
     /// Internal storage for TrueType outlines.
     glyf_outline: glyf::Outline,
+    /// Inner context for loading color outlines.
+    colr: colr::Context,
     /// Storage for normalized variation coordinates.
     coords: Vec<NormalizedCoord>,
     /// Storage for variation settings.

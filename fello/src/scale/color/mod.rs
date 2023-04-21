@@ -1,2 +1,0 @@
-mod paint;
-mod transform;

@@ -1,6 +1,4 @@
-/*! Axes of variation in a variable font.
-
-*/
+//! Axes of variation in a variable font.
 
 use read_fonts::{
     tables::avar::Avar,
@@ -9,9 +7,11 @@ use read_fonts::{
     TableProvider,
 };
 
-use crate::{meta::info_strings::StringId, NormalizedCoord};
-
-use super::VariationSetting;
+use crate::{
+    instance::{Location, NormalizedCoord},
+    setting::VariationSetting,
+    string::StringId,
+};
 
 /// Axis of variation in a variable font.
 #[derive(Clone)]
@@ -71,7 +71,7 @@ impl Axis {
 /// Collection of variation axes.
 #[derive(Clone)]
 pub struct Axes<'a> {
-    fvar: Option<Fvar<'a>>,
+    pub(super) fvar: Option<Fvar<'a>>,
     avar: Option<Avar<'a>>,
 }
 
@@ -107,18 +107,29 @@ impl<'a> Axes<'a> {
         self.iter().find(|axis| axis.tag() == tag)
     }
 
-    /// Given an iterator of variation settings in user space, returns an
-    /// iterator over the computed normalized design space coordinates
-    /// for all axes in order.
-    pub fn normalize<I>(&self, settings: I) -> Normalize
+    /// Given an iterator of variation settings in user space, returns a
+    /// location in normalized variation space.
+    pub fn location<I>(&self, settings: I) -> Location
+    where
+        I: IntoIterator,
+        I::IntoIter: 'a + Clone,
+        I::Item: Into<VariationSetting>,
+    {
+        let mut location = Location::new(self.len());
+        self.location_to_slice(settings, location.coords_mut());
+        location
+    }
+
+    /// Given an iterator of variation settings in user space, computes a
+    /// sequence of ordered normalized variation coordinates and stores
+    /// them in the target slice.
+    pub fn location_to_slice<I>(&self, settings: I, location: &mut [NormalizedCoord])
     where
         I: IntoIterator,
         I::IntoIter: 'a + Clone,
         I::Item: Into<VariationSetting>,
     {
         let avar_mappings = self.avar.as_ref().map(|avar| avar.axis_segment_maps());
-        let mut storage = CoordStorage::new(self.len());
-        let coords = storage.coords_mut();
         for setting in settings.into_iter() {
             let setting = setting.into();
             for (i, axis) in self
@@ -133,10 +144,11 @@ impl<'a> Axes<'a> {
                     .flatten()
                     .map(|mapping| mapping.apply(coord))
                     .unwrap_or(coord);
-                coords[i] = coord.to_f2dot14();
+                if let Some(target_coord) = location.get_mut(i) {
+                    *target_coord = coord.to_f2dot14();
+                }
             }
         }
-        Normalize { storage, pos: 0 }
     }
 
     /// Returns an iterator over the axes
@@ -170,55 +182,6 @@ impl<'a> IntoIterator for Axes<'a> {
         Iter {
             inner: self,
             pos: 0,
-        }
-    }
-}
-
-/// Result of the [Axes::normalize] method.
-pub struct Normalize {
-    storage: CoordStorage,
-    pos: usize,
-}
-
-impl Iterator for Normalize {
-    type Item = NormalizedCoord;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let pos = self.pos;
-        self.pos += 1;
-        self.storage.coords().get(pos).copied()
-    }
-}
-
-const MAX_INLINE_COORD_STORAGE: usize = 32;
-
-enum CoordStorage {
-    Inline([NormalizedCoord; MAX_INLINE_COORD_STORAGE], u8),
-    Heap(Vec<NormalizedCoord>),
-}
-
-impl CoordStorage {
-    fn new(len: usize) -> Self {
-        if len > MAX_INLINE_COORD_STORAGE {
-            let mut vec = Vec::with_capacity(len);
-            vec.resize(len, Default::default());
-            Self::Heap(vec)
-        } else {
-            Self::Inline(Default::default(), len as u8)
-        }
-    }
-
-    fn coords(&self) -> &[NormalizedCoord] {
-        match self {
-            Self::Inline(coords, len) => &coords[..*len as usize],
-            Self::Heap(vec) => &vec,
-        }
-    }
-
-    fn coords_mut(&mut self) -> &mut [NormalizedCoord] {
-        match self {
-            Self::Inline(coords, len) => &mut coords[..*len as usize],
-            Self::Heap(vec) => &mut vec[..],
         }
     }
 }

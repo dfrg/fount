@@ -1,5 +1,6 @@
 use read_fonts::types::Fixed;
 
+/// Affine transformation matrix.
 #[derive(Copy, Clone, Debug)]
 pub struct Transform {
     pub xx: f32,
@@ -23,6 +24,7 @@ impl Transform {
             dy: elements[5],
         }
     }
+
     pub fn scale(x: f32, y: f32) -> Self {
         Self::new(&[x, 0., 0., y, 0., 0.])
     }

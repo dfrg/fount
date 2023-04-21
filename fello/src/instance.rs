@@ -105,3 +105,96 @@ impl<'a> IntoIterator for &'_ LocationRef<'a> {
         self.0.iter()
     }
 }
+
+/// Ordered sequence of normalized variation coordinates.
+///
+/// This is an owned version of [`LocationRef`]. See the documentation on that
+/// type for more detail.
+#[derive(Clone, Default, Debug)]
+pub struct Location {
+    inner: LocationInner,
+}
+
+impl Location {
+    /// Creates a new location with the given number of normalized coordinates.
+    ///
+    /// Each element will be initialized to the default value (0.0).
+    pub fn new(len: usize) -> Self {
+        Self {
+            inner: LocationInner::new(len),
+        }
+    }
+
+    /// Returns the underlying array of normalized coordinates.
+    pub fn coords(&self) -> &[NormalizedCoord] {
+        self.inner.as_ref()
+    }
+
+    /// Returns a mutable reference to the underlying array of normalized
+    /// coordinates.
+    pub fn coords_mut(&mut self) -> &mut [NormalizedCoord] {
+        self.inner.as_mut()
+    }
+}
+
+impl<'a> From<&'a Location> for LocationRef<'a> {
+    fn from(value: &'a Location) -> Self {
+        LocationRef(value.coords())
+    }
+}
+
+impl<'a> IntoIterator for &'a Location {
+    type IntoIter = core::slice::Iter<'a, NormalizedCoord>;
+    type Item = &'a NormalizedCoord;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.coords().iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Location {
+    type IntoIter = core::slice::IterMut<'a, NormalizedCoord>;
+    type Item = &'a mut NormalizedCoord;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.coords_mut().iter_mut()
+    }
+}
+
+const MAX_INLINE_COORDS: usize = 11;
+
+#[derive(Clone, Debug)]
+enum LocationInner {
+    Inline([NormalizedCoord; MAX_INLINE_COORDS], u16),
+    Heap(Vec<NormalizedCoord>),
+}
+
+impl LocationInner {
+    fn new(len: usize) -> Self {
+        if len <= MAX_INLINE_COORDS {
+            Self::Inline([NormalizedCoord::default(); MAX_INLINE_COORDS], len as u16)
+        } else {
+            Self::Heap(vec![NormalizedCoord::default(); len])
+        }
+    }
+
+    fn as_ref(&self) -> &[NormalizedCoord] {
+        match self {
+            Self::Inline(coords, len) => &coords[..*len as usize],
+            Self::Heap(coords) => coords,
+        }
+    }
+
+    fn as_mut(&mut self) -> &mut [NormalizedCoord] {
+        match self {
+            Self::Inline(coords, len) => &mut coords[..*len as usize],
+            Self::Heap(coords) => &mut coords[..],
+        }
+    }
+}
+
+impl Default for LocationInner {
+    fn default() -> Self {
+        Self::Inline([NormalizedCoord::default(); MAX_INLINE_COORDS], 0)
+    }
+}

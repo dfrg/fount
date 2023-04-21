@@ -27,6 +27,7 @@ pub mod metrics;
 pub mod scale;
 pub mod setting;
 pub mod string;
+pub mod variation;
 
 mod provider;
 
