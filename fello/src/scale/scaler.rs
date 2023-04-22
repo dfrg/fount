@@ -8,6 +8,7 @@ use super::Hinting;
 
 use core::{borrow::Borrow, str::FromStr};
 use read_fonts::{
+    tables::cpal::Cpal,
     types::{Fixed, GlyphId, Tag},
     TableProvider,
 };
@@ -146,6 +147,7 @@ impl<'a> ScalerBuilder<'a> {
             coords,
             outlines: Outlines { glyf },
             color_outlines,
+            cpal: font.cpal().ok(),
         }
     }
 
@@ -197,6 +199,7 @@ pub struct Scaler<'a> {
     coords: &'a [NormalizedCoord],
     outlines: Outlines<'a>,
     color_outlines: Option<colr::Scaler<'a>>,
+    cpal: Option<Cpal<'a>>,
 }
 
 impl<'a> Scaler<'a> {
@@ -225,7 +228,14 @@ impl<'a> Scaler<'a> {
         if let Some(color_outlines) = self.color_outlines.as_mut() {
             color_outlines.load(
                 glyph_id,
-                |ix| Default::default(),
+                |color_ix| {
+                    cpal_color(&self.cpal, 0, color_ix).unwrap_or(color::Color {
+                        r: 128,
+                        g: 128,
+                        b: 128,
+                        a: 255,
+                    })
+                },
                 |gid, pen| self.outlines.outline(gid, pen),
                 pen,
             )
@@ -252,5 +262,24 @@ impl<'a> Outlines<'a> {
         } else {
             Err(Error::NoSources)
         }
+    }
+}
+
+fn cpal_color(cpal: &Option<Cpal>, palette: u16, color: u16) -> Option<color::Color> {
+    let cpal = cpal.as_ref()?;
+    let n_palette_entries = cpal.num_palette_entries();
+    if palette < cpal.num_palettes() && color < n_palette_entries {
+        let color = cpal
+            .color_records_array()?
+            .ok()?
+            .get((palette as usize * n_palette_entries as usize) + color as usize)?;
+        Some(color::Color {
+            r: color.red(),
+            g: color.green(),
+            b: color.blue(),
+            a: color.alpha(),
+        })
+    } else {
+        None
     }
 }

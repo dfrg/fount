@@ -29,7 +29,7 @@ pub struct Context {
     verbs: Vec<path::Verb>,
     points: Vec<Point<f32>>,
     path_cache: HashMap<GlyphId, PathIndex>,
-    visited: HashSet<GlyphId>,
+    blacklist: HashSet<usize>,
     commands: Vec<Command>,
 }
 
@@ -41,7 +41,7 @@ impl Context {
         self.verbs.clear();
         self.points.clear();
         self.path_cache.clear();
-        self.visited.clear();
+        self.blacklist.clear();
         self.commands.clear();
     }
 
@@ -59,7 +59,7 @@ impl Context {
             verbs: &mut self.verbs,
             points: &mut self.points,
         };
-        let res = outline_fn(GlyphId::new(0), &mut builder)?;
+        let res = outline_fn(glyph_id, &mut builder)?;
         let path_index = self.paths.len();
         self.paths.push(PathData {
             glyph_id,
@@ -121,8 +121,8 @@ impl<'a> Scaler<'a> {
         pen: &mut impl color::ColorPen,
     ) -> Result<(), Error> {
         self.context.reset();
-        self.context.visited.insert(glyph_id);
-        let paint = self.font.base_glyph_paint(glyph_id)?;
+        let (paint, paint_id) = self.font.base_glyph_paint(glyph_id)?;
+        self.context.blacklist.insert(paint_id);
         self.load_paint(paint, &palette_fn, &mut outline_fn, 0)?;
         for command in &self.context.commands {
             match command {
@@ -182,21 +182,24 @@ impl<'a> Scaler<'a> {
                 let start = layers.first_layer_index() as usize;
                 let end = start + layers.num_layers() as usize;
                 for layer_ix in start..end {
-                    let child_paint = self.font.layer_paint(layer_ix)?;
-                    self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                    let (child_paint, child_paint_id) = self.font.layer_paint(layer_ix)?;
+                    if !self.context.blacklist.contains(&child_paint_id) {
+                        self.context.blacklist.insert(child_paint_id);
+                        self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                        self.context.blacklist.remove(&child_paint_id);
+                    }
                 }
                 self.maybe_pop_transform(&transform);
             }
             Paint::ColrGlyph(glyph) => {
                 self.maybe_push_transform(&transform);
                 let glyph_id = glyph.glyph_id();
-                if self.context.visited.contains(&glyph_id) {
-                    // Spec says to do nothing if glyph on recursion blacklist.
-                    return Ok(());
+                let (child_paint, child_paint_id) = self.font.base_glyph_paint(glyph.glyph_id())?;
+                if !self.context.blacklist.contains(&child_paint_id) {
+                    self.context.blacklist.insert(child_paint_id);
+                    self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                    self.context.blacklist.remove(&child_paint_id);
                 }
-                self.context.visited.insert(glyph_id);
-                let child_paint = self.font.base_glyph_paint(glyph.glyph_id())?;
-                self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
                 self.maybe_pop_transform(&transform);
             }
             Paint::Composite(composite) => {
@@ -276,6 +279,7 @@ impl<'a> Scaler<'a> {
                 BrushData::Solid(color)
             }
             Paint::VarSolid(solid) => {
+                println!("VAR SOLID!");
                 let mut color = palette_fn(solid.palette_index());
                 let deltas = self.font.deltas::<1>(solid.var_index_base());
                 let alpha = (solid.alpha().to_fixed() + deltas[0]).to_f64() as f32;
@@ -285,24 +289,24 @@ impl<'a> Scaler<'a> {
                 BrushData::Solid(color)
             }
             Paint::LinearGradient(gradient) => {
-                let (stops, extend) = self.push_color_stops(gradient.color_line()?, palette_fn)?;
+                let (stops, extend) = self.push_color_line(gradient.color_line()?, palette_fn)?;
                 let x0 = gradient.x0().to_i16() as f32;
                 let y0 = gradient.y0().to_i16() as f32;
                 let x1 = gradient.x1().to_i16() as f32;
                 let y1 = gradient.y1().to_i16() as f32;
-                // TODO: handle x2/y2
+                let x2 = gradient.x2().to_i16() as f32;
+                let y2 = gradient.y2().to_i16() as f32;
+                let [start, end] = linear_endpoints(x0, y0, x1, y1, x2, y2);
                 BrushData::Gradient(GradientData {
-                    kind: color::GradientKind::Linear {
-                        start: Point::new(x0, y0),
-                        end: Point::new(x1, y1),
-                    },
+                    kind: color::GradientKind::Linear { start, end },
                     extend,
                     stops,
                 })
             }
             Paint::VarLinearGradient(gradient) => {
+                println!("VAR GRADIENT!");
                 let (stops, extend) =
-                    self.push_var_color_stops(gradient.color_line()?, palette_fn)?;
+                    self.push_var_color_line(gradient.color_line()?, palette_fn)?;
                 let deltas = self.font.deltas::<6>(gradient.var_index_base());
                 let x0 =
                     (Fixed::from_i32(gradient.x0().to_i16() as i32) + deltas[0]).to_f64() as f32;
@@ -312,18 +316,19 @@ impl<'a> Scaler<'a> {
                     (Fixed::from_i32(gradient.x1().to_i16() as i32) + deltas[2]).to_f64() as f32;
                 let y1 =
                     (Fixed::from_i32(gradient.y1().to_i16() as i32) + deltas[3]).to_f64() as f32;
-                // TODO: handle x2/y2
+                let x2 =
+                    (Fixed::from_i32(gradient.x2().to_i16() as i32) + deltas[4]).to_f64() as f32;
+                let y2 =
+                    (Fixed::from_i32(gradient.y2().to_i16() as i32) + deltas[5]).to_f64() as f32;
+                let [start, end] = linear_endpoints(x0, y0, x1, y1, x2, y2);
                 BrushData::Gradient(GradientData {
-                    kind: color::GradientKind::Linear {
-                        start: Point::new(x0, y0),
-                        end: Point::new(x1, y1),
-                    },
+                    kind: color::GradientKind::Linear { start, end },
                     extend,
                     stops,
                 })
             }
             Paint::RadialGradient(gradient) => {
-                let (stops, extend) = self.push_color_stops(gradient.color_line()?, palette_fn)?;
+                let (stops, extend) = self.push_color_line(gradient.color_line()?, palette_fn)?;
                 let x0 = gradient.x0().to_i16() as f32;
                 let y0 = gradient.y0().to_i16() as f32;
                 let r0 = gradient.radius0().to_u16() as f32;
@@ -343,7 +348,7 @@ impl<'a> Scaler<'a> {
             }
             Paint::VarRadialGradient(gradient) => {
                 let (stops, extend) =
-                    self.push_var_color_stops(gradient.color_line()?, palette_fn)?;
+                    self.push_var_color_line(gradient.color_line()?, palette_fn)?;
                 let deltas = self.font.deltas::<6>(gradient.var_index_base());
                 let x0 =
                     (Fixed::from_i32(gradient.x0().to_i16() as i32) + deltas[0]).to_f64() as f32;
@@ -374,7 +379,7 @@ impl<'a> Scaler<'a> {
         }))
     }
 
-    fn push_color_stops(
+    fn push_color_line(
         &mut self,
         color_line: ColorLine,
         palette_fn: &impl Fn(u16) -> color::Color,
@@ -397,7 +402,7 @@ impl<'a> Scaler<'a> {
         Ok((start..end, color_line.extend()))
     }
 
-    fn push_var_color_stops(
+    fn push_var_color_line(
         &mut self,
         color_line: VarColorLine,
         palette_fn: &impl Fn(u16) -> color::Color,
@@ -455,7 +460,7 @@ impl<'a> ScalerFont<'a> {
         }
     }
 
-    fn base_glyph_paint(&self, glyph_id: GlyphId) -> Result<Paint<'a>, Error> {
+    fn base_glyph_paint(&self, glyph_id: GlyphId) -> Result<(Paint<'a>, usize), Error> {
         let list = self
             .colr
             .base_glyph_list()
@@ -466,29 +471,12 @@ impl<'a> ScalerFont<'a> {
             Ok(ix) => &records[ix],
             _ => return Err(Error::GlyphNotFound(glyph_id)),
         };
-        Ok(record.paint(list.offset_data())?)
+        let offset_data = list.offset_data();
+        let id = record.paint_offset().to_u32() as usize + offset_data.as_ref().as_ptr() as usize;
+        Ok((record.paint(offset_data)?, id))
     }
 
-    fn color_layers(
-        &self,
-        start: usize,
-        end: usize,
-    ) -> Result<impl Iterator<Item = Result<Paint<'a>, ReadError>> + '_, Error> {
-        let layers = self
-            .colr
-            .layer_list()
-            .transpose()?
-            .ok_or(Error::NoSources)?;
-        let offsets = layers
-            .paint_offsets()
-            .get(start..end)
-            .ok_or(Error::Read(ReadError::OutOfBounds))?;
-        Ok(offsets
-            .into_iter()
-            .map(move |offset| Paint::read(layers.offset_data())))
-    }
-
-    fn layer_paint(&self, index: usize) -> Result<Paint<'a>, Error> {
+    fn layer_paint(&self, index: usize) -> Result<(Paint<'a>, usize), Error> {
         let layers = self
             .colr
             .layer_list()
@@ -497,8 +485,11 @@ impl<'a> ScalerFont<'a> {
         let offset = layers
             .paint_offsets()
             .get(index)
-            .ok_or(Error::Read(ReadError::OutOfBounds))?;
-        Ok(offset.get().resolve(layers.offset_data())?)
+            .ok_or(Error::Read(ReadError::OutOfBounds))?
+            .get();
+        let offset_data = layers.offset_data();
+        let id = offset.to_u32() as usize + offset_data.as_ref().as_ptr() as usize;
+        Ok((offset.resolve(offset_data)?, id))
     }
 
     fn deltas<const N: usize>(&self, var_base: u32) -> [Fixed; N] {
@@ -593,6 +584,30 @@ pub enum Command {
         path: PathIndex,
         brush: BrushIndex,
     },
+}
+
+fn linear_endpoints(x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> [Point<f32>; 2] {
+    let p0 = Point::new(x0, y0);
+    let p1 = Point::new(x1, y1);
+    let p2 = Point::new(x2, y2);
+    let perp_to_p2p0 = p2 - p0;
+    let perp_to_p2p0 = Point::new(perp_to_p2p0.y, -perp_to_p2p0.x);
+    let p3 = p0 + project_point(p1 - p0, perp_to_p2p0);
+    [p0, p3]
+}
+
+fn project_point(a: Point<f32>, b: Point<f32>) -> Point<f32> {
+    let b_len = (b.x * b.x + b.y * b.y).sqrt();
+    if b_len == 0.0 {
+        return Point::default();
+    }
+    let a_dot_b = a.x * b.x + a.y * b.y;
+    let normalized = Point::new(b.x / b_len, b.y / b_len);
+    normalized * (a_dot_b / b_len)
+}
+
+fn cross_product(a: Point<f32>, b: Point<f32>) -> f32 {
+    a.x * b.y - a.y * b.x
 }
 
 fn flatten_all_transforms<'a>(
