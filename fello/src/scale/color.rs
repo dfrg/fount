@@ -83,7 +83,7 @@ pub trait ColorPen {
     fn pop_clip(&mut self);
     fn push_layer(&mut self, mode: Option<CompositeMode>);
     fn pop_layer(&mut self);
-    fn fill(&mut self, brush: &Brush);
+    fn fill(&mut self, brush: &Brush, brush_transform: Option<Transform>);
     fn fill_path(
         &mut self,
         glyph_id: GlyphId,

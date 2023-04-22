@@ -138,15 +138,14 @@ impl<'a> ScalerBuilder<'a> {
         } else {
             None
         };
-        let color = match (font.colr(), font.cpal()) {
-            (Ok(colr), Ok(cpal)) => Some((colr, cpal)),
-            _ => None,
-        };
+        let color_outlines = font
+            .colr()
+            .ok()
+            .map(|colr| colr::Scaler::new(&mut self.context.colr, colr, coords));
         Scaler {
             coords,
             outlines: Outlines { glyf },
-            color_context: &mut self.context.colr,
-            color,
+            color_outlines,
         }
     }
 
@@ -197,8 +196,7 @@ impl<'a> ScalerBuilder<'a> {
 pub struct Scaler<'a> {
     coords: &'a [NormalizedCoord],
     outlines: Outlines<'a>,
-    color_context: &'a mut colr::Context,
-    color: Option<(colr::Colr<'a>, colr::Cpal<'a>)>,
+    color_outlines: Option<colr::Scaler<'a>>,
 }
 
 impl<'a> Scaler<'a> {
@@ -220,14 +218,15 @@ impl<'a> Scaler<'a> {
 
     /// Returns if the scaler has a source for color outlines.
     pub fn has_color_outlines(&self) -> bool {
-        self.color.is_some()
+        self.color_outlines.is_some()
     }
 
     pub fn color_outline(&mut self, glyph_id: GlyphId, pen: &mut impl ColorPen) -> Result<()> {
-        if let Some((colr, cpal)) = self.color.as_ref() {
-            self.color_context.load(
+        if let Some(color_outlines) = self.color_outlines.as_mut() {
+            color_outlines.load(
                 glyph_id,
-                |gid, pen| self.outlines.outline(glyph_id, pen),
+                |ix| Default::default(),
+                |gid, pen| self.outlines.outline(gid, pen),
                 pen,
             )
         } else {
