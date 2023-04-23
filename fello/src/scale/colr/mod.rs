@@ -18,8 +18,14 @@ use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::ops::Range;
 
+/// Index for a cached path.
 type PathIndex = usize;
+
+/// Index for a cached brush.
 type BrushIndex = usize;
+
+/// Identifier used for representing a paint on the recursion blacklist.
+type PaintId = usize;
 
 #[derive(Clone, Default, Debug)]
 pub struct Context {
@@ -29,7 +35,7 @@ pub struct Context {
     verbs: Vec<path::Verb>,
     points: Vec<Point<f32>>,
     path_cache: HashMap<GlyphId, PathIndex>,
-    blacklist: HashSet<usize>,
+    blacklist: HashSet<PaintId>,
     commands: Vec<Command>,
 }
 
@@ -121,9 +127,24 @@ impl<'a> Scaler<'a> {
         pen: &mut impl color::ColorPen,
     ) -> Result<(), Error> {
         self.context.reset();
-        let (paint, paint_id) = self.font.base_glyph_paint(glyph_id)?;
-        self.context.blacklist.insert(paint_id);
-        self.load_paint(paint, &palette_fn, &mut outline_fn, 0)?;
+        if self.font.colr.version() == 0 {
+            let layer_range = self.font.v0_base_glyph(glyph_id)?;
+            for layer_ix in layer_range {
+                let (glyph_id, color_index) = self.font.v0_layer(layer_ix)?;
+                let path_index = self.context.push_path(glyph_id, &mut outline_fn)?;
+                let color = palette_fn(color_index);
+                let brush_index = self.context.push_brush(BrushData::Solid(color), None);
+                self.context.commands.push(Command::FillPath {
+                    glyph_id,
+                    path: path_index,
+                    brush: brush_index,
+                });
+            }
+        } else {
+            let (paint, paint_id) = self.font.v1_base_glyph_paint(glyph_id)?;
+            self.context.blacklist.insert(paint_id);
+            self.load_paint(paint, &palette_fn, &mut outline_fn, 0)?;
+        }
         for command in &self.context.commands {
             match command {
                 Command::PushTransform(transform) => {
@@ -182,7 +203,7 @@ impl<'a> Scaler<'a> {
                 let start = layers.first_layer_index() as usize;
                 let end = start + layers.num_layers() as usize;
                 for layer_ix in start..end {
-                    let (child_paint, child_paint_id) = self.font.layer_paint(layer_ix)?;
+                    let (child_paint, child_paint_id) = self.font.v1_layer_paint(layer_ix)?;
                     if !self.context.blacklist.contains(&child_paint_id) {
                         self.context.blacklist.insert(child_paint_id);
                         self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
@@ -194,7 +215,8 @@ impl<'a> Scaler<'a> {
             Paint::ColrGlyph(glyph) => {
                 self.maybe_push_transform(&transform);
                 let glyph_id = glyph.glyph_id();
-                let (child_paint, child_paint_id) = self.font.base_glyph_paint(glyph.glyph_id())?;
+                let (child_paint, child_paint_id) =
+                    self.font.v1_base_glyph_paint(glyph.glyph_id())?;
                 if !self.context.blacklist.contains(&child_paint_id) {
                     self.context.blacklist.insert(child_paint_id);
                     self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
@@ -279,7 +301,6 @@ impl<'a> Scaler<'a> {
                 BrushData::Solid(color)
             }
             Paint::VarSolid(solid) => {
-                println!("VAR SOLID!");
                 let mut color = palette_fn(solid.palette_index());
                 let deltas = self.font.deltas::<1>(solid.var_index_base());
                 let alpha = (solid.alpha().to_fixed() + deltas[0]).to_f64() as f32;
@@ -304,7 +325,6 @@ impl<'a> Scaler<'a> {
                 })
             }
             Paint::VarLinearGradient(gradient) => {
-                println!("VAR GRADIENT!");
                 let (stops, extend) =
                     self.push_var_color_line(gradient.color_line()?, palette_fn)?;
                 let deltas = self.font.deltas::<6>(gradient.var_index_base());
@@ -460,7 +480,24 @@ impl<'a> ScalerFont<'a> {
         }
     }
 
-    fn base_glyph_paint(&self, glyph_id: GlyphId) -> Result<(Paint<'a>, usize), Error> {
+    fn v0_base_glyph(&self, glyph_id: GlyphId) -> Result<Range<usize>, Error> {
+        let records = self.colr.base_glyph_records().ok_or(Error::NoSources)??;
+        let record = match records.binary_search_by(|rec| rec.glyph_id().cmp(&glyph_id)) {
+            Ok(ix) => &records[ix],
+            _ => return Err(Error::GlyphNotFound(glyph_id)),
+        };
+        let start = record.first_layer_index() as usize;
+        let end = start + record.num_layers() as usize;
+        Ok(start..end)
+    }
+
+    fn v0_layer(&self, index: usize) -> Result<(GlyphId, u16), Error> {
+        let layers = self.colr.layer_records().ok_or(Error::NoSources)??;
+        let layer = layers.get(index).ok_or(ReadError::OutOfBounds)?;
+        Ok((layer.glyph_id(), layer.palette_index()))
+    }
+
+    fn v1_base_glyph_paint(&self, glyph_id: GlyphId) -> Result<(Paint<'a>, PaintId), Error> {
         let list = self
             .colr
             .base_glyph_list()
@@ -472,11 +509,13 @@ impl<'a> ScalerFont<'a> {
             _ => return Err(Error::GlyphNotFound(glyph_id)),
         };
         let offset_data = list.offset_data();
+        // Use the address of the paint as an identifier for the recursion
+        // blacklist.
         let id = record.paint_offset().to_u32() as usize + offset_data.as_ref().as_ptr() as usize;
         Ok((record.paint(offset_data)?, id))
     }
 
-    fn layer_paint(&self, index: usize) -> Result<(Paint<'a>, usize), Error> {
+    fn v1_layer_paint(&self, index: usize) -> Result<(Paint<'a>, PaintId), Error> {
         let layers = self
             .colr
             .layer_list()
@@ -488,6 +527,8 @@ impl<'a> ScalerFont<'a> {
             .ok_or(Error::Read(ReadError::OutOfBounds))?
             .get();
         let offset_data = layers.offset_data();
+        // Use the address of the paint as an identifier for the recursion
+        // blacklist.
         let id = offset.to_u32() as usize + offset_data.as_ref().as_ptr() as usize;
         Ok((offset.resolve(offset_data)?, id))
     }
