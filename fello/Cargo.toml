@@ -14,11 +14,17 @@ default = ["scale", "hinting"]
 scale = []
 hinting = []
 
+# [dependencies]
+# read-fonts = { git = "https://github.com/googlefonts/fontations/" }
+
+# [dev-dependencies]
+# font-test-data = { git = "https://github.com/googlefonts/fontations/" }
+
 [dependencies]
-read-fonts = { git = "https://github.com/googlefonts/fontations", rev = "4440a14" }
+read-fonts = { path = "../../fontations/read-fonts" }
 
 [dev-dependencies]
-read-fonts = { git = "https://github.com/googlefonts/fontations", rev = "4440a14", features = ["test_data"] }
+font-test-data = { git = "https://github.com/googlefonts/fontations/" }
 
 # cargo-release settings
 [package.metadata.release]

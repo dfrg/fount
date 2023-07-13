@@ -19,15 +19,45 @@
 pub extern crate read_fonts as raw;
 
 pub mod attribute;
+
+// #[doc(hidden)]
 pub mod charmap;
+#[doc(hidden)]
 pub mod font;
 pub mod instance;
 pub mod metrics;
+pub mod palette;
+#[doc(hidden)]
 #[cfg(feature = "scale")]
 pub mod scale;
+#[doc(hidden)]
+
 pub mod setting;
 pub mod string;
 pub mod variation;
+
+// /// Mapping of characters to glyph identifiers.
+// pub mod layout {}
+
+/// Loading, scaling and hinting of glyph outlines.
+pub mod outline {    
+    pub struct Font {}
+    pub struct Setting {}
+    pub struct Scale {}
+    pub struct Location {}
+    pub struct LocationRef {}
+    pub struct Tag {}
+    pub struct GlyphId {}
+    pub struct Key {}
+
+    pub type NormalizedCoord = raw::types::F2Dot14;
+}
+
+// /// Collections of fonts supporting fallback and enumeration.
+// pub mod family {}
+
+/// Writing systems and associated typographic features.
+pub mod feature {}
 
 mod provider;
 

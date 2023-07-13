@@ -1,11 +1,14 @@
 //! Color outlines loaded from the `COLR` table.
 
 use read_fonts::tables::variations::{DeltaSetIndexMap, ItemVariationStore};
-use read_fonts::types::Fixed;
+use read_fonts::types::{BoundingBox, F2Dot14, FWord, Fixed, UfWord};
 use read_fonts::{tables::colr::*, types::Point, ReadError};
 use read_fonts::{FontRead, ResolveOffset};
 
-pub use read_fonts::tables::{colr::Colr, cpal::Cpal};
+pub use read_fonts::tables::{
+    colr::{Colr, ColrInstance, ResolvedPaint},
+    cpal::Cpal,
+};
 
 use super::color::Color;
 use super::{color, path, Error, Pen};
@@ -108,14 +111,14 @@ impl Context {
 
 pub struct Scaler<'a> {
     context: &'a mut Context,
-    font: ScalerFont<'a>,
+    instance: ColrInstance<'a>,
 }
 
 impl<'a> Scaler<'a> {
     pub fn new(context: &'a mut Context, colr: Colr<'a>, coords: &'a [NormalizedCoord]) -> Self {
         Self {
             context,
-            font: ScalerFont::new(colr, coords),
+            instance: ColrInstance::new(colr, coords),
         }
     }
 
@@ -127,24 +130,40 @@ impl<'a> Scaler<'a> {
         pen: &mut impl color::ColorPen,
     ) -> Result<(), Error> {
         self.context.reset();
-        if self.font.colr.version() == 0 {
-            let layer_range = self.font.v0_base_glyph(glyph_id)?;
-            for layer_ix in layer_range {
-                let (glyph_id, color_index) = self.font.v0_layer(layer_ix)?;
-                let path_index = self.context.push_path(glyph_id, &mut outline_fn)?;
-                let color = palette_fn(color_index);
-                let brush_index = self.context.push_brush(BrushData::Solid(color), None);
-                self.context.commands.push(Command::FillPath {
-                    glyph_id,
-                    path: path_index,
-                    brush: brush_index,
-                });
-            }
+        if self.instance.version() == 0 {
+            self.load_v0(glyph_id, &palette_fn, &mut outline_fn)?;
         } else {
-            let (paint, paint_id) = self.font.v1_base_glyph_paint(glyph_id)?;
-            self.context.blacklist.insert(paint_id);
-            self.load_paint(paint, &palette_fn, &mut outline_fn, 0)?;
+            if let Ok(Some((paint, paint_id))) = self.instance.v1_base_glyph(glyph_id) {
+                self.context.blacklist.insert(paint_id);
+                self.load_paint(
+                    paint.resolve(&self.instance)?,
+                    &palette_fn,
+                    &mut outline_fn,
+                    0,
+                )?;
+            } else {
+                self.load_v0(glyph_id, &palette_fn, &mut outline_fn)?;
+            }
         }
+        let bounds = self
+            .instance
+            .v1_clip_box(glyph_id)
+            .ok()
+            .flatten()
+            .map(|cbox| cbox.resolve(&self.instance))
+            .map(|cbox| BoundingBox {
+                x_min: cbox.x_min.to_f64() as f32,
+                y_min: cbox.y_min.to_f64() as f32,
+                x_max: cbox.x_max.to_f64() as f32,
+                y_max: cbox.y_max.to_f64() as f32,
+            })
+            .unwrap_or(BoundingBox {
+                x_min: -4096.0,
+                y_min: -4096.0,
+                x_max: 4096.0,
+                y_max: 4096.0,
+            });
+        pen.bounds(bounds);
         for command in &self.context.commands {
             match command {
                 Command::PushTransform(transform) => {
@@ -187,70 +206,112 @@ impl<'a> Scaler<'a> {
         Ok(())
     }
 
+    fn load_v0(
+        &mut self,
+        glyph_id: GlyphId,
+        palette_fn: &impl Fn(u16) -> color::Color,
+        mut outline_fn: &mut impl FnMut(GlyphId, &mut PathBuilder) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let layer_range = self
+            .instance
+            .v0_base_glyph(glyph_id)?
+            .ok_or(Error::GlyphNotFound(glyph_id))?;
+        for layer_ix in layer_range {
+            let (glyph_id, color_index) = self.instance.v0_layer(layer_ix)?;
+            let path_index = self.context.push_path(glyph_id, &mut outline_fn)?;
+            let color = palette_fn(color_index);
+            let brush_index = self.context.push_brush(BrushData::Solid(color), None);
+            self.context.commands.push(Command::FillPath {
+                glyph_id,
+                path: path_index,
+                brush: brush_index,
+            });
+        }
+        Ok(())
+    }
+
     fn load_paint(
         &mut self,
-        paint: Paint<'a>,
+        paint: ResolvedPaint<'a>,
         palette_fn: &impl Fn(u16) -> color::Color,
         outline_fn: &mut impl FnMut(GlyphId, &mut PathBuilder) -> Result<(), Error>,
         recurse_depth: u32,
     ) -> Result<(), Error> {
-        let (transform, paint) = flatten_all_transforms(&self.font, paint)?;
+        let (transform, paint) = flatten_all_transforms(&self.instance, paint)?;
         // At this point, we know paint is not a transform. Process the other
         // variants.
         match paint {
-            Paint::ColrLayers(layers) => {
+            ResolvedPaint::ColrLayers { range } => {
                 self.maybe_push_transform(&transform);
-                let start = layers.first_layer_index() as usize;
-                let end = start + layers.num_layers() as usize;
-                for layer_ix in start..end {
-                    let (child_paint, child_paint_id) = self.font.v1_layer_paint(layer_ix)?;
+                for layer_ix in range {
+                    let (child_paint, child_paint_id) = self.instance.v1_layer(layer_ix)?;
                     if !self.context.blacklist.contains(&child_paint_id) {
                         self.context.blacklist.insert(child_paint_id);
-                        self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                        self.load_paint(
+                            child_paint.resolve(&self.instance)?,
+                            palette_fn,
+                            outline_fn,
+                            recurse_depth + 1,
+                        )?;
                         self.context.blacklist.remove(&child_paint_id);
                     }
                 }
                 self.maybe_pop_transform(&transform);
             }
-            Paint::ColrGlyph(glyph) => {
+            ResolvedPaint::ColrGlyph { glyph_id } => {
                 self.maybe_push_transform(&transform);
-                let glyph_id = glyph.glyph_id();
-                let (child_paint, child_paint_id) =
-                    self.font.v1_base_glyph_paint(glyph.glyph_id())?;
+                let (child_paint, child_paint_id) = self
+                    .instance
+                    .v1_base_glyph(glyph_id)?
+                    .ok_or(Error::GlyphNotFound(glyph_id))?;
                 if !self.context.blacklist.contains(&child_paint_id) {
                     self.context.blacklist.insert(child_paint_id);
-                    self.load_paint(child_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                    self.load_paint(
+                        child_paint.resolve(&self.instance)?,
+                        palette_fn,
+                        outline_fn,
+                        recurse_depth + 1,
+                    )?;
                     self.context.blacklist.remove(&child_paint_id);
                 }
                 self.maybe_pop_transform(&transform);
             }
-            Paint::Composite(composite) => {
+            ResolvedPaint::Composite {
+                source_paint,
+                mode,
+                backdrop_paint,
+            } => {
                 self.maybe_push_transform(&transform);
                 // Push an empty layer to isolate the blend.
                 self.context.commands.push(Command::PushLayer(None));
                 // Evaluate the backdrop paint graph.
-                let backdrop_paint = composite.backdrop_paint()?;
-                self.load_paint(backdrop_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                self.load_paint(
+                    backdrop_paint.resolve(&self.instance)?,
+                    palette_fn,
+                    outline_fn,
+                    recurse_depth + 1,
+                )?;
                 // Push a layer with the requested composite mode.
-                self.context
-                    .commands
-                    .push(Command::PushLayer(Some(composite.composite_mode())));
+                self.context.commands.push(Command::PushLayer(Some(mode)));
                 // Evaluate the source paint graph.
-                let source_paint = composite.source_paint()?;
-                self.load_paint(source_paint, palette_fn, outline_fn, recurse_depth + 1)?;
+                self.load_paint(
+                    source_paint.resolve(&self.instance)?,
+                    palette_fn,
+                    outline_fn,
+                    recurse_depth + 1,
+                )?;
                 // Pop the composite layer.
                 self.context.commands.push(Command::PopLayer);
                 // Pop the isolation layer.
                 self.context.commands.push(Command::PopLayer);
                 self.maybe_pop_transform(&transform);
             }
-            Paint::Glyph(glyph) => {
+            ResolvedPaint::Glyph { glyph_id, paint } => {
                 self.maybe_push_transform(&transform);
-                let glyph_id = glyph.glyph_id();
                 let path_index = self.context.push_path(glyph_id, outline_fn)?;
-                let child_paint = glyph.paint()?;
+                let child_paint = paint.resolve(&self.instance)?;
                 let (child_transform, child_paint) =
-                    flatten_all_transforms(&self.font, child_paint)?;
+                    flatten_all_transforms(&self.instance, child_paint)?;
                 if let Some(brush) = self.load_brush_paint(&child_paint, palette_fn)? {
                     // Optimization: if the child paint graph is a transform
                     // sequence followed by a brush, emit a single fill path
@@ -288,162 +349,112 @@ impl<'a> Scaler<'a> {
 
     fn load_brush_paint(
         &mut self,
-        paint: &Paint<'a>,
+        paint: &ResolvedPaint<'a>,
         palette_fn: &impl Fn(u16) -> color::Color,
     ) -> Result<Option<BrushData>, Error> {
         Ok(Some(match paint {
-            Paint::Solid(solid) => {
-                let mut color = palette_fn(solid.palette_index());
-                let alpha = solid.alpha().to_f32();
+            ResolvedPaint::Solid {
+                palette_index,
+                alpha,
+            } => {
+                let mut color = palette_fn(*palette_index);
+                let alpha = alpha.to_f64() as f32;
                 if alpha != 1.0 {
                     color.a = (color.a as f32 * alpha) as u8;
                 }
                 BrushData::Solid(color)
             }
-            Paint::VarSolid(solid) => {
-                let mut color = palette_fn(solid.palette_index());
-                let deltas = self.font.deltas::<1>(solid.var_index_base());
-                let alpha = (solid.alpha().to_fixed() + deltas[0]).to_f64() as f32;
-                if alpha != 1.0 {
-                    color.a = (color.a as f32 * alpha) as u8;
-                }
-                BrushData::Solid(color)
-            }
-            Paint::LinearGradient(gradient) => {
-                let (stops, extend) = self.push_color_line(gradient.color_line()?, palette_fn)?;
-                let x0 = gradient.x0().to_i16() as f32;
-                let y0 = gradient.y0().to_i16() as f32;
-                let x1 = gradient.x1().to_i16() as f32;
-                let y1 = gradient.y1().to_i16() as f32;
-                let x2 = gradient.x2().to_i16() as f32;
-                let y2 = gradient.y2().to_i16() as f32;
-                let [start, end] = linear_endpoints(x0, y0, x1, y1, x2, y2);
+            ResolvedPaint::LinearGradient {
+                x0,
+                y0,
+                x1,
+                y1,
+                x2,
+                y2,
+                color_stops,
+                extend,
+            } => {
+                let stops = self.push_stops(color_stops, palette_fn)?;
+                let p0 = Point::new(x0, y0).map(|x| x.to_f64() as f32);
+                let p1 = Point::new(x1, y1).map(|x| x.to_f64() as f32);
+                let p2 = Point::new(x2, y2).map(|x| x.to_f64() as f32);
+                let perp_to_p2p0 = p2 - p0;
+                let perp_to_p2p0 = Point::new(perp_to_p2p0.y, -perp_to_p2p0.x);
+                let p3 = p0 + project_point(p1 - p0, perp_to_p2p0);
+                let start = p0;
+                let end = p3;
                 BrushData::Gradient(GradientData {
                     kind: color::GradientKind::Linear { start, end },
-                    extend,
+                    extend: *extend,
                     stops,
                 })
             }
-            Paint::VarLinearGradient(gradient) => {
-                let (stops, extend) =
-                    self.push_var_color_line(gradient.color_line()?, palette_fn)?;
-                let deltas = self.font.deltas::<6>(gradient.var_index_base());
-                let x0 =
-                    (Fixed::from_i32(gradient.x0().to_i16() as i32) + deltas[0]).to_f64() as f32;
-                let y0 =
-                    (Fixed::from_i32(gradient.y0().to_i16() as i32) + deltas[1]).to_f64() as f32;
-                let x1 =
-                    (Fixed::from_i32(gradient.x1().to_i16() as i32) + deltas[2]).to_f64() as f32;
-                let y1 =
-                    (Fixed::from_i32(gradient.y1().to_i16() as i32) + deltas[3]).to_f64() as f32;
-                let x2 =
-                    (Fixed::from_i32(gradient.x2().to_i16() as i32) + deltas[4]).to_f64() as f32;
-                let y2 =
-                    (Fixed::from_i32(gradient.y2().to_i16() as i32) + deltas[5]).to_f64() as f32;
-                let [start, end] = linear_endpoints(x0, y0, x1, y1, x2, y2);
-                BrushData::Gradient(GradientData {
-                    kind: color::GradientKind::Linear { start, end },
-                    extend,
-                    stops,
-                })
-            }
-            Paint::RadialGradient(gradient) => {
-                let (stops, extend) = self.push_color_line(gradient.color_line()?, palette_fn)?;
-                let x0 = gradient.x0().to_i16() as f32;
-                let y0 = gradient.y0().to_i16() as f32;
-                let r0 = gradient.radius0().to_u16() as f32;
-                let x1 = gradient.x1().to_i16() as f32;
-                let y1 = gradient.y1().to_i16() as f32;
-                let r1 = gradient.radius1().to_u16() as f32;
+            ResolvedPaint::RadialGradient {
+                x0,
+                y0,
+                radius0,
+                x1,
+                y1,
+                radius1,
+                color_stops,
+                extend,
+            } => {
+                let stops = self.push_stops(color_stops, palette_fn)?;
                 BrushData::Gradient(GradientData {
                     kind: color::GradientKind::Radial {
-                        start_center: Point::new(x0, y0),
-                        start_radius: r0,
-                        end_center: Point::new(x1, y1),
-                        end_radius: r1,
+                        start_center: Point::new(x0, y0).map(|x| x.to_f64() as f32),
+                        start_radius: radius0.to_f64() as f32,
+                        end_center: Point::new(x1, y1).map(|x| x.to_f64() as f32),
+                        end_radius: radius1.to_f64() as f32,
                     },
-                    extend,
+                    extend: *extend,
                     stops,
                 })
             }
-            Paint::VarRadialGradient(gradient) => {
-                let (stops, extend) =
-                    self.push_var_color_line(gradient.color_line()?, palette_fn)?;
-                let deltas = self.font.deltas::<6>(gradient.var_index_base());
-                let x0 =
-                    (Fixed::from_i32(gradient.x0().to_i16() as i32) + deltas[0]).to_f64() as f32;
-                let y0 =
-                    (Fixed::from_i32(gradient.y0().to_i16() as i32) + deltas[1]).to_f64() as f32;
-                let r0 = (Fixed::from_i32(gradient.radius0().to_u16() as i32) + deltas[2]).to_f64()
-                    as f32;
-                let x1 =
-                    (Fixed::from_i32(gradient.x1().to_i16() as i32) + deltas[3]).to_f64() as f32;
-                let y1 =
-                    (Fixed::from_i32(gradient.y1().to_i16() as i32) + deltas[4]).to_f64() as f32;
-                let r1 = (Fixed::from_i32(gradient.radius1().to_u16() as i32) + deltas[5]).to_f64()
-                    as f32;
+            ResolvedPaint::SweepGradient {
+                center_x,
+                center_y,
+                start_angle,
+                end_angle,
+                color_stops,
+                extend,
+            } => {
+                let stops = self.push_stops(color_stops, palette_fn)?;
                 BrushData::Gradient(GradientData {
-                    kind: color::GradientKind::Radial {
-                        start_center: Point::new(x0, y0),
-                        start_radius: r0,
-                        end_center: Point::new(x1, y1),
-                        end_radius: r1,
+                    kind: color::GradientKind::Sweep {
+                        center: Point::new(center_x, center_y).map(|x| x.to_f64() as f32),
+                        start_angle: start_angle.to_f64() as f32,
+                        end_angle: end_angle.to_f64() as f32,
                     },
-                    extend,
+                    extend: *extend,
                     stops,
                 })
             }
-            Paint::SweepGradient(..) => unimplemented!(),
-            Paint::VarSweepGradient(..) => unimplemented!(),
             _ => return Ok(None),
         }))
     }
 
-    fn push_color_line(
+    fn push_stops(
         &mut self,
-        color_line: ColorLine,
+        color_stops: &ColorStops<'a>,
         palette_fn: &impl Fn(u16) -> color::Color,
-    ) -> Result<(Range<usize>, Extend), Error> {
+    ) -> Result<Range<usize>, Error> {
         let start = self.context.stops.len();
         self.context
             .stops
-            .extend(color_line.color_stops().iter().map(|stop| {
-                let mut color = palette_fn(stop.palette_index());
-                let alpha = stop.alpha().to_f32();
+            .extend(color_stops.resolve(&self.instance).map(|stop| {
+                let mut color = palette_fn(stop.palette_index);
+                let alpha = stop.alpha.to_f64() as f32;
                 if alpha != 1.0 {
                     color.a = (color.a as f32 * alpha) as u8;
                 }
                 color::ColorStop {
-                    offset: stop.stop_offset().to_f32(),
+                    offset: stop.offset.to_f64() as f32,
                     color,
                 }
             }));
         let end = self.context.stops.len();
-        Ok((start..end, color_line.extend()))
-    }
-
-    fn push_var_color_line(
-        &mut self,
-        color_line: VarColorLine,
-        palette_fn: &impl Fn(u16) -> color::Color,
-    ) -> Result<(Range<usize>, Extend), Error> {
-        let start = self.context.stops.len();
-        self.context
-            .stops
-            .extend(color_line.color_stops().iter().map(|stop| {
-                let deltas = self.font.deltas::<2>(stop.var_index_base());
-                let mut color = palette_fn(stop.palette_index());
-                let alpha = (stop.alpha().to_fixed() + deltas[1]).to_f64() as f32;
-                if alpha != 1.0 {
-                    color.a = (color.a as f32 * alpha) as u8;
-                }
-                color::ColorStop {
-                    offset: (stop.stop_offset().to_fixed() + deltas[0]).to_f64() as f32,
-                    color,
-                }
-            }));
-        let end = self.context.stops.len();
-        Ok((start..end, color_line.extend()))
+        Ok(start..end)
     }
 
     fn maybe_push_transform(&mut self, transform: &Option<Transform>) {
@@ -460,100 +471,6 @@ impl<'a> Scaler<'a> {
         }
     }
 }
-
-struct ScalerFont<'a> {
-    colr: Colr<'a>,
-    coords: &'a [NormalizedCoord],
-    index_map: Option<DeltaSetIndexMap<'a>>,
-    var_store: Option<ItemVariationStore<'a>>,
-}
-
-impl<'a> ScalerFont<'a> {
-    fn new(colr: Colr<'a>, coords: &'a [NormalizedCoord]) -> Self {
-        let index_map = colr.var_index_map().map(|res| res.ok()).flatten();
-        let var_store = colr.item_variation_store().map(|res| res.ok()).flatten();
-        Self {
-            colr,
-            coords,
-            index_map,
-            var_store,
-        }
-    }
-
-    fn v0_base_glyph(&self, glyph_id: GlyphId) -> Result<Range<usize>, Error> {
-        let records = self.colr.base_glyph_records().ok_or(Error::NoSources)??;
-        let record = match records.binary_search_by(|rec| rec.glyph_id().cmp(&glyph_id)) {
-            Ok(ix) => &records[ix],
-            _ => return Err(Error::GlyphNotFound(glyph_id)),
-        };
-        let start = record.first_layer_index() as usize;
-        let end = start + record.num_layers() as usize;
-        Ok(start..end)
-    }
-
-    fn v0_layer(&self, index: usize) -> Result<(GlyphId, u16), Error> {
-        let layers = self.colr.layer_records().ok_or(Error::NoSources)??;
-        let layer = layers.get(index).ok_or(ReadError::OutOfBounds)?;
-        Ok((layer.glyph_id(), layer.palette_index()))
-    }
-
-    fn v1_base_glyph_paint(&self, glyph_id: GlyphId) -> Result<(Paint<'a>, PaintId), Error> {
-        let list = self
-            .colr
-            .base_glyph_list()
-            .transpose()?
-            .ok_or(Error::NoSources)?;
-        let records = list.base_glyph_paint_records();
-        let record = match records.binary_search_by(|rec| rec.glyph_id().cmp(&glyph_id)) {
-            Ok(ix) => &records[ix],
-            _ => return Err(Error::GlyphNotFound(glyph_id)),
-        };
-        let offset_data = list.offset_data();
-        // Use the address of the paint as an identifier for the recursion
-        // blacklist.
-        let id = record.paint_offset().to_u32() as usize + offset_data.as_ref().as_ptr() as usize;
-        Ok((record.paint(offset_data)?, id))
-    }
-
-    fn v1_layer_paint(&self, index: usize) -> Result<(Paint<'a>, PaintId), Error> {
-        let layers = self
-            .colr
-            .layer_list()
-            .transpose()?
-            .ok_or(Error::NoSources)?;
-        let offset = layers
-            .paint_offsets()
-            .get(index)
-            .ok_or(Error::Read(ReadError::OutOfBounds))?
-            .get();
-        let offset_data = layers.offset_data();
-        // Use the address of the paint as an identifier for the recursion
-        // blacklist.
-        let id = offset.to_u32() as usize + offset_data.as_ref().as_ptr() as usize;
-        Ok((offset.resolve(offset_data)?, id))
-    }
-
-    fn deltas<const N: usize>(&self, var_base: u32) -> [Fixed; N] {
-        let mut result = [Fixed::ZERO; N];
-        if self.coords.is_empty() || self.var_store.is_none() {
-            return result;
-        }
-        let var_store = self.var_store.as_ref().unwrap();
-        for i in 0..N {
-            let var_idx = var_base + i as u32;
-            if let Some(index_map) = self.index_map.as_ref() {
-                let Ok(delta_index) = index_map.get(var_idx) else {
-                    continue;
-                };
-                result[i] = var_store
-                    .compute_delta(delta_index, self.coords)
-                    .unwrap_or_default();
-            }
-        }
-        result
-    }
-}
-
 pub struct PathBuilder<'a> {
     verbs: &'a mut Vec<path::Verb>,
     points: &'a mut Vec<Point<f32>>,
@@ -652,12 +569,12 @@ fn cross_product(a: Point<f32>, b: Point<f32>) -> f32 {
 }
 
 fn flatten_all_transforms<'a>(
-    font: &ScalerFont,
-    mut paint: Paint<'a>,
-) -> Result<(Option<Transform>, Paint<'a>), ReadError> {
+    instance: &ColrInstance<'a>,
+    mut paint: ResolvedPaint<'a>,
+) -> Result<(Option<Transform>, ResolvedPaint<'a>), ReadError> {
     let mut transform = Transform::IDENTITY;
     let mut has_transform = false;
-    while let Some((child_transform, child_paint)) = flatten_one_transform(font, &paint)? {
+    while let Some((child_transform, child_paint)) = flatten_one_transform(instance, &paint)? {
         transform = transform * child_transform;
         paint = child_paint;
         has_transform = true;
@@ -670,137 +587,80 @@ fn flatten_all_transforms<'a>(
 }
 
 fn flatten_one_transform<'a>(
-    font: &ScalerFont,
-    paint: &Paint<'a>,
-) -> Result<Option<(Transform, Paint<'a>)>, ReadError> {
+    instance: &ColrInstance<'a>,
+    paint: &ResolvedPaint<'a>,
+) -> Result<Option<(Transform, ResolvedPaint<'a>)>, ReadError> {
+    fn map_angle(angle: Fixed) -> f32 {
+        (angle.to_f64() as f32 * 180.0).to_radians()
+    }
     Ok(Some(match paint {
-        Paint::Transform(transform) => {
-            let paint = transform.paint()?;
-            let transform = transform.transform()?;
+        ResolvedPaint::Transform {
+            xx,
+            yx,
+            xy,
+            yy,
+            dx,
+            dy,
+            paint,
+        } => {
+            let paint = paint.resolve(instance)?;
             (
                 Transform {
-                    xx: transform.xx().to_f64() as f32,
-                    yx: transform.yx().to_f64() as f32,
-                    xy: transform.xy().to_f64() as f32,
-                    yy: transform.yy().to_f64() as f32,
-                    dx: transform.dx().to_f64() as f32,
-                    dy: transform.dy().to_f64() as f32,
+                    xx: xx.to_f64() as f32,
+                    yx: yx.to_f64() as f32,
+                    xy: xy.to_f64() as f32,
+                    yy: yy.to_f64() as f32,
+                    dx: dx.to_f64() as f32,
+                    dy: dy.to_f64() as f32,
                 },
                 paint,
             )
         }
-        Paint::VarTransform(transform) => {
-            let paint = transform.paint()?;
-            let transform = transform.transform()?;
-            let deltas = font.deltas::<6>(transform.var_index_base());
+        ResolvedPaint::Translate { dx, dy, paint } => {
+            let paint = paint.resolve(instance)?;
             (
-                Transform {
-                    xx: (transform.xx() + deltas[0]).to_f64() as f32,
-                    yx: (transform.yx() + deltas[1]).to_f64() as f32,
-                    xy: (transform.xy() + deltas[2]).to_f64() as f32,
-                    yy: (transform.yy() + deltas[3]).to_f64() as f32,
-                    dx: (transform.dx() + deltas[4]).to_f64() as f32,
-                    dy: (transform.dy() + deltas[5]).to_f64() as f32,
-                },
+                Transform::translate(dx.to_f64() as f32, dy.to_f64() as f32),
                 paint,
             )
         }
-        Paint::Translate(transform) => (
-            Transform::translate(
-                transform.dx().to_i16() as f32,
-                transform.dy().to_i16() as f32,
-            ),
-            transform.paint()?,
+        ResolvedPaint::Scale {
+            scale_x,
+            scale_y,
+            around_center,
+            paint,
+        } => (
+            Transform::scale(scale_x.to_f64() as f32, scale_y.to_f64() as f32)
+                .maybe_around_center(*around_center),
+            paint.resolve(instance)?,
         ),
-        Paint::VarTranslate(transform) => {
-            let paint = transform.paint()?;
-            let deltas = font.deltas::<2>(transform.var_index_base());
-            (
-                Transform::translate(
-                    (Fixed::from_i32(transform.dx().to_i16() as i32) + deltas[0]).to_f64() as f32,
-                    (Fixed::from_i32(transform.dy().to_i16() as i32) + deltas[1]).to_f64() as f32,
-                ),
-                paint,
-            )
-        }
-        Paint::Rotate(transform) => (
-            Transform::rotate((transform.angle().to_f32() * 180.0).to_radians()),
-            transform.paint()?,
+        ResolvedPaint::Rotate {
+            angle,
+            around_center,
+            paint,
+        } => (
+            Transform::rotate(map_angle(*angle)).maybe_around_center(*around_center),
+            paint.resolve(instance)?,
         ),
-        Paint::VarRotate(transform) => (
-            Transform::rotate((transform.angle().to_f32() * 180.0).to_radians()),
-            transform.paint()?,
+        ResolvedPaint::Skew {
+            x_skew_angle,
+            y_skew_angle,
+            around_center,
+            paint,
+        } => (
+            Transform::skew(-map_angle(*x_skew_angle), map_angle(*y_skew_angle))
+                .maybe_around_center(*around_center),
+            paint.resolve(instance)?,
         ),
-        Paint::RotateAroundCenter(transform) => (
-            Transform::rotate((transform.angle().to_f32() * 180.0).to_radians()).around_center(
-                transform.center_x().to_i16() as f32,
-                transform.center_y().to_i16() as f32,
-            ),
-            transform.paint()?,
-        ),
-        Paint::VarRotateAroundCenter(transform) => (Transform::default(), transform.paint()?),
-        Paint::Scale(transform) => (
-            Transform::scale(transform.scale_x().to_f32(), transform.scale_y().to_f32()),
-            transform.paint()?,
-        ),
-        Paint::VarScale(transform) => {
-            let paint = transform.paint()?;
-            let deltas = font.deltas::<2>(transform.var_index_base());
-            (
-                Transform::scale(
-                    (transform.scale_x().to_fixed() + deltas[0]).to_f64() as f32,
-                    (transform.scale_y().to_fixed() + deltas[1]).to_f64() as f32,
-                ),
-                paint,
-            )
-        }
-        Paint::ScaleAroundCenter(transform) => (
-            Transform::scale(transform.scale_x().to_f32(), transform.scale_y().to_f32())
-                .around_center(
-                    transform.center_x().to_i16() as f32,
-                    transform.center_y().to_i16() as f32,
-                ),
-            transform.paint()?,
-        ),
-        Paint::VarScaleAroundCenter(transform) => (Transform::default(), transform.paint()?),
-        Paint::ScaleUniform(transform) => (
-            Transform::scale(transform.scale().to_f32(), transform.scale().to_f32()),
-            transform.paint()?,
-        ),
-        Paint::ScaleUniformAroundCenter(transform) => (
-            Transform::scale(transform.scale().to_f32(), transform.scale().to_f32()).around_center(
-                transform.center_x().to_i16() as f32,
-                transform.center_y().to_i16() as f32,
-            ),
-            transform.paint()?,
-        ),
-        Paint::VarScaleUniform(transform) => {
-            let paint = transform.paint()?;
-            let deltas = font.deltas::<1>(transform.var_index_base());
-            let scale = (transform.scale().to_fixed() + deltas[0]).to_f64() as f32;
-            (Transform::scale(scale, scale), paint)
-        }
-        Paint::VarScaleUniformAroundCenter(transform) => (Transform::default(), transform.paint()?),
-        Paint::Skew(transform) => (
-            Transform::skew(
-                (transform.x_skew_angle().to_f32() * 180.0).to_radians(),
-                (transform.y_skew_angle().to_f32() * 180.0).to_radians(),
-            ),
-            transform.paint()?,
-        ),
-        Paint::VarSkew(transform) => (Transform::default(), transform.paint()?),
-        Paint::SkewAroundCenter(transform) => (
-            Transform::skew(
-                (transform.x_skew_angle().to_f32() * 180.0).to_radians(),
-                (transform.y_skew_angle().to_f32() * 180.0).to_radians(),
-            )
-            .around_center(
-                transform.center_x().to_i16() as f32,
-                transform.center_y().to_i16() as f32,
-            ),
-            transform.paint()?,
-        ),
-        Paint::VarSkewAroundCenter(transform) => (Transform::default(), transform.paint()?),
         _ => return Ok(None),
     }))
+}
+
+impl Transform {
+    fn maybe_around_center(self, center: Option<Point<Fixed>>) -> Self {
+        if let Some(center) = center {
+            self.around_center(center.x.to_f64() as f32, center.y.to_f64() as f32)
+        } else {
+            self
+        }
+    }
 }

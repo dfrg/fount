@@ -1,6 +1,6 @@
 //! Representation of color outlines.
 
-use read_fonts::types::{GlyphId, Point};
+use read_fonts::types::{GlyphId, Point, BoundingBox};
 
 pub use read_fonts::tables::colr::{CompositeMode, Extend};
 
@@ -77,6 +77,7 @@ pub enum Brush<'a> {
 
 /// Interface for processing a color outline.
 pub trait ColorPen {
+    fn bounds(&mut self, bounds: BoundingBox<f32>);
     fn push_transform(&mut self, transform: Transform);
     fn pop_transform(&mut self);
     fn push_clip(&mut self, glyph_id: GlyphId, path: &Path);

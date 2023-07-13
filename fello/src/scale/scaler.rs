@@ -8,7 +8,8 @@ use super::Hinting;
 
 use core::{borrow::Borrow, str::FromStr};
 use read_fonts::{
-    tables::cpal::Cpal,
+    tables::postscript::Instance as CffInstance,
+    tables::{cpal::Cpal},
     types::{Fixed, GlyphId, Tag},
     TableProvider,
 };
@@ -139,13 +140,23 @@ impl<'a> ScalerBuilder<'a> {
         } else {
             None
         };
+        let units_per_em = font
+            .head()
+            .map(|head| head.units_per_em())
+            .unwrap_or_default();
+        let cff = CffInstance::from_font(font).ok();
         let color_outlines = font
             .colr()
             .ok()
             .map(|colr| colr::Scaler::new(&mut self.context.colr, colr, coords));
         Scaler {
             coords,
-            outlines: Outlines { glyf },
+            outlines: Outlines {
+                size: self.size.ppem(),
+                hint: self.hint.is_some(),
+                glyf,
+                cff,
+            },
             color_outlines,
             cpal: font.cpal().ok(),
         }
@@ -216,7 +227,7 @@ impl<'a> Scaler<'a> {
     /// Loads a simple outline for the specified glyph identifier and invokes the functions
     /// in the given sink for the sequence of path commands that define the outline.
     pub fn outline(&mut self, glyph_id: GlyphId, sink: &mut impl Pen) -> Result<()> {
-        self.outlines.outline(glyph_id, sink)
+        self.outlines.outline(glyph_id, self.coords, sink)
     }
 
     /// Returns if the scaler has a source for color outlines.
@@ -236,7 +247,7 @@ impl<'a> Scaler<'a> {
                         a: 255,
                     })
                 },
-                |gid, pen| self.outlines.outline(gid, pen),
+                |gid, pen| self.outlines.outline(gid, self.coords, pen),
                 pen,
             )
         } else {
@@ -247,18 +258,24 @@ impl<'a> Scaler<'a> {
 
 /// Outline glyph scalers.
 struct Outlines<'a> {
+    size: Option<f32>,
+    hint: bool,
     glyf: Option<(glyf::Scaler<'a>, &'a mut glyf::Outline)>,
+    cff: Option<CffInstance<'a>>,
 }
 
 impl<'a> Outlines<'a> {
     fn has_outlines(&self) -> bool {
-        self.glyf.is_some()
+        self.glyf.is_some() || self.cff.is_some()
     }
 
-    fn outline(&mut self, glyph_id: GlyphId, sink: &mut impl Pen) -> Result<()> {
+    fn outline(&mut self, glyph_id: GlyphId, coords: &[NormalizedCoord], sink: &mut impl Pen) -> Result<()> {
         if let Some((scaler, glyf_outline)) = &mut self.glyf {
             scaler.load(glyph_id, glyf_outline)?;
             Ok(glyf_outline.to_path(sink)?)
+        } else if let Some(cff) = &self.cff {
+            cff.outline(glyph_id, self.size, coords, self.hint, sink)
+                .map_err(|_| Error::GlyphNotFound(glyph_id))
         } else {
             Err(Error::NoSources)
         }
