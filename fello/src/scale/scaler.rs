@@ -4,16 +4,20 @@ use crate::{meta::variations::VariationSetting, FontKey, Size};
 #[cfg(feature = "hinting")]
 use super::Hinting;
 
-use core::{borrow::Borrow, str::FromStr};
+use core::borrow::Borrow;
 use read_fonts::{
-    types::{Fixed, GlyphId, Tag},
+    tables::postscript::{Scaler as PostScriptScaler, ScalerSubfont},
+    types::{Fixed, GlyphId},
     TableProvider,
 };
 
 /// Builder for configuring a glyph scaler.
+///
+/// See the [module level documentation](crate::scale#building-a-scaler)
+/// for more detail.
 pub struct ScalerBuilder<'a> {
     context: &'a mut Context,
-    key: Option<FontKey>,
+    cache_key: Option<FontKey>,
     size: Size,
     #[cfg(feature = "hinting")]
     hint: Option<Hinting>,
@@ -26,7 +30,7 @@ impl<'a> ScalerBuilder<'a> {
         context.variations.clear();
         Self {
             context,
-            key: None,
+            cache_key: None,
             size: Size::unscaled(),
             #[cfg(feature = "hinting")]
             hint: None,
@@ -36,7 +40,7 @@ impl<'a> ScalerBuilder<'a> {
     /// Sets a unique font identifier for hint state caching. Specifying `None` will
     /// disable caching.
     pub fn key(mut self, key: Option<FontKey>) -> Self {
-        self.key = key;
+        self.cache_key = key;
         self
     }
 
@@ -74,9 +78,15 @@ impl<'a> ScalerBuilder<'a> {
         self
     }
 
-    /// Adds the sequence of variation settings. This will clear any variations
-    /// specified as normalized coordinates.
-    pub fn variations<I>(self, variations: I) -> Self
+    /// Appends the given sequence of variation settings. This will clear any
+    /// variations specified as normalized coordinates.
+    ///
+    /// This methods accepts any type which can be converted into an iterator
+    /// that yields a sequence of values that are convertible to
+    /// [`VariationSetting`]. Various conversions from tuples are provided.
+    ///
+    /// Iterators that yield the above types are also accepted.
+    pub fn variations<I>(self, settings: I) -> Self
     where
         I: IntoIterator,
         I::Item: Into<VariationSetting>,
@@ -84,7 +94,7 @@ impl<'a> ScalerBuilder<'a> {
         self.context.coords.clear();
         self.context
             .variations
-            .extend(variations.into_iter().map(|v| v.into()));
+            .extend(settings.into_iter().map(|v| v.into()));
         self
     }
 
@@ -93,22 +103,32 @@ impl<'a> ScalerBuilder<'a> {
     pub fn build(mut self, font: &impl TableProvider<'a>) -> Scaler<'a> {
         self.resolve_variations(font);
         let coords = &self.context.coords[..];
-        let glyf = if let Ok(glyf) = glyf::Scaler::new(
+        let size = self.size.ppem().unwrap_or_default();
+        let outlines = if let Ok(glyf) = glyf::Scaler::new(
             &mut self.context.glyf,
             font,
-            self.key,
-            self.size.ppem().unwrap_or_default(),
+            self.cache_key,
+            size,
             #[cfg(feature = "hinting")]
             self.hint,
             coords,
         ) {
-            Some((glyf, &mut self.context.glyf_outline))
+            Some(Outlines::TrueType(glyf, &mut self.context.glyf_outline))
         } else {
-            None
+            PostScriptScaler::new(font)
+                .ok()
+                .and_then(|scaler| {
+                    let first_subfont = scaler.subfont(0, size, coords).ok()?;
+                    Some((scaler, first_subfont))
+                })
+                .map(|(scaler, subfont)| Outlines::PostScript(scaler, subfont))
         };
         Scaler {
+            size,
             coords,
-            outlines: Outlines { glyf },
+            #[cfg(feature = "hinting")]
+            hint: self.hint,
+            outlines,
         }
     }
 
@@ -153,9 +173,15 @@ impl<'a> ScalerBuilder<'a> {
 }
 
 /// Glyph scaler for a specific font and configuration.
+///
+/// See the [module level documentation](crate::scale#getting-an-outline)
+/// for more detail.
 pub struct Scaler<'a> {
+    size: f32,
     coords: &'a [NormalizedCoord],
-    outlines: Outlines<'a>,
+    #[cfg(feature = "hinting")]
+    hint: Option<Hinting>,
+    outlines: Option<Outlines<'a>>,
 }
 
 impl<'a> Scaler<'a> {
@@ -166,32 +192,58 @@ impl<'a> Scaler<'a> {
 
     /// Returns true if the scaler has a source for simple outlines.
     pub fn has_outlines(&self) -> bool {
-        self.outlines.has_outlines()
+        self.outlines.is_some()
     }
 
     /// Loads a simple outline for the specified glyph identifier and invokes the functions
-    /// in the given sink for the sequence of path commands that define the outline.
-    pub fn outline(&mut self, glyph_id: GlyphId, sink: &mut impl Pen) -> Result<()> {
-        self.outlines.outline(glyph_id, sink)
+    /// in the given pen for the sequence of path commands that define the outline.
+    pub fn outline(&mut self, glyph_id: GlyphId, pen: &mut impl Pen) -> Result<()> {
+        if let Some(outlines) = &mut self.outlines {
+            #[cfg(feature = "hinting")]
+            {
+                outlines.outline(glyph_id, self.size, self.coords, self.hint, pen)
+            }
+            #[cfg(not(feature = "hinting"))]
+            outlines.outline(glyph_id, self.size, self.coords, pen)
+        } else {
+            Err(Error::NoSources)
+        }
     }
 }
 
-/// Outline glyph scalers.
-struct Outlines<'a> {
-    glyf: Option<(glyf::Scaler<'a>, &'a mut glyf::Outline)>,
+// Clippy doesn't like the size discrepancy between the two variants. Ignore
+// for now: we'll replace this with a real cache.
+#[allow(clippy::large_enum_variant)]
+enum Outlines<'a> {
+    TrueType(glyf::Scaler<'a>, &'a mut glyf::Outline),
+    PostScript(PostScriptScaler<'a>, ScalerSubfont),
 }
 
 impl<'a> Outlines<'a> {
-    fn has_outlines(&self) -> bool {
-        self.glyf.is_some()
-    }
-
-    fn outline(&mut self, glyph_id: GlyphId, sink: &mut impl Pen) -> Result<()> {
-        if let Some((scaler, glyf_outline)) = &mut self.glyf {
-            scaler.load(glyph_id, glyf_outline)?;
-            Ok(glyf_outline.to_path(sink)?)
-        } else {
-            Err(Error::NoSources)
+    fn outline(
+        &mut self,
+        glyph_id: GlyphId,
+        size: f32,
+        coords: &'a [NormalizedCoord],
+        #[cfg(feature = "hinting")] hint: Option<Hinting>,
+        pen: &mut impl Pen,
+    ) -> Result<()> {
+        match self {
+            Self::TrueType(scaler, outline) => {
+                scaler.load(glyph_id, outline)?;
+                Ok(outline.to_path(pen)?)
+            }
+            Self::PostScript(scaler, subfont) => {
+                let subfont_index = scaler.subfont_index(glyph_id);
+                if subfont_index != subfont.index() {
+                    *subfont = scaler.subfont(subfont_index, size, coords)?;
+                }
+                #[cfg(feature = "hinting")]
+                let hint = hint.is_some();
+                #[cfg(not(feature = "hinting"))]
+                let hint = false;
+                Ok(scaler.outline(subfont, glyph_id, coords, hint, pen)?)
+            }
         }
     }
 }

@@ -12,6 +12,9 @@ pub mod meta;
 #[cfg(feature = "scale")]
 pub mod scale;
 
+/// Limit for recursion when loading TrueType composite glyphs.
+const GLYF_COMPOSITE_RECURSION_LIMIT: usize = 32;
+
 pub use setting::Setting;
 
 /// Type for a normalized variation coordinate.

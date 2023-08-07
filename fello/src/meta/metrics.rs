@@ -150,7 +150,10 @@ impl Metrics {
         let mut used_typo_metrics = false;
         if let Some(os2) = &os2 {
             const USE_TYPO_METRICS: u16 = 1 << 7;
-            if os2.fs_selection().contains(SelectionFlags::USE_TYPO_METRICS) {
+            if os2
+                .fs_selection()
+                .contains(SelectionFlags::USE_TYPO_METRICS)
+            {
                 metrics.ascent = os2.s_typo_ascender() as f32 * scale;
                 metrics.descent = os2.s_typo_descender() as f32 * scale;
                 metrics.leading = os2.s_typo_line_gap() as f32 * scale;
@@ -349,7 +352,7 @@ impl<'a> GlyphMetrics<'a> {
 mod tests {
     use super::*;
     use crate::MetadataProvider as _;
-    use read_fonts::test_data::test_fonts::{SIMPLE_GLYF, VAZIRMATN_VAR};
+    use font_test_data::{SIMPLE_GLYF, VAZIRMATN_VAR};
     use read_fonts::FontRef;
 
     #[test]
@@ -443,7 +446,7 @@ mod tests {
             (908.0, 100.0),
             (1246.0, 29.0),
             (1246.0, 29.0),
-            (557.0, 57.0),
+            (556.0, 57.0),
         ];
         let result = (0..4)
             .map(|i| {

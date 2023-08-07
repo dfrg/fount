@@ -256,12 +256,12 @@ impl Default for Weight {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use read_fonts::FontRef;
     use crate::MetadataProvider;
+    use read_fonts::FontRef;
 
     #[test]
     fn missing_os2() {
-        let font = FontRef::new(read_fonts::test_data::test_fonts::CMAP12_FONT1).unwrap();
+        let font = FontRef::new(font_test_data::CMAP12_FONT1).unwrap();
         let attrs = font.attributes();
         assert_eq!(attrs.stretch, Stretch::NORMAL);
         assert_eq!(attrs.style, Style::Italic);
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn so_stylish() {
-        let font = FontRef::new(read_fonts::test_data::test_fonts::CMAP14_FONT1).unwrap();
+        let font = FontRef::new(font_test_data::CMAP14_FONT1).unwrap();
         let attrs = font.attributes();
         assert_eq!(attrs.stretch, Stretch::SEMI_CONDENSED);
         assert_eq!(attrs.style, Style::Oblique(Some(-14.0)));
