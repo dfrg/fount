@@ -1,4 +1,7 @@
-use super::{glyf, Context, Error, NormalizedCoord, Pen, Result};
+use super::{
+    cff::{Scaler as PostScriptScaler, ScalerSubfont},
+    glyf, Context, Error, NormalizedCoord, Pen, Result,
+};
 use crate::{meta::variations::VariationSetting, FontKey, Size};
 
 #[cfg(feature = "hinting")]
@@ -6,7 +9,6 @@ use super::Hinting;
 
 use core::borrow::Borrow;
 use read_fonts::{
-    tables::postscript::{Scaler as PostScriptScaler, ScalerSubfont},
     types::{Fixed, GlyphId},
     TableProvider,
 };

@@ -2,6 +2,7 @@
 Glyph loading and scaling.
 */
 
+mod cff;
 mod error;
 mod scaler;
 
