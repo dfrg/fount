@@ -1,11 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::BTreeMap;
 
 use read_fonts::types::GlyphId;
 
+use super::layout::GlyphSet;
 use super::value::{Adjustment, Anchor};
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default, Debug)]
-pub struct AdjustmentAction {
+pub struct AdjustAction {
     pub glyph: GlyphId,
     pub adjustment: Adjustment,
 }
@@ -32,14 +33,13 @@ impl std::fmt::Display for SingleMarkAttachment {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct GroupedMarkAttachment {
+pub struct MarkAttachAction {
     pub base: GlyphId,
     pub base_anchor: Anchor,
-    //pub marks: Vec<(Anchor, Vec<GlyphId>)>,
-    pub marks: BTreeMap<Anchor, BTreeSet<GlyphId>>,
+    pub marks: BTreeMap<Anchor, GlyphSet>,
 }
 
-impl std::fmt::Display for GroupedMarkAttachment {
+impl std::fmt::Display for MarkAttachAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         writeln!(f, "{} {}", self.base.to_u16(), self.base_anchor)?;
         for (anchor, glyphs) in &self.marks {
@@ -56,7 +56,7 @@ impl std::fmt::Display for GroupedMarkAttachment {
     }
 }
 
-impl GroupedMarkAttachment {
+impl MarkAttachAction {
     pub fn flatten(&self) -> impl Iterator<Item = SingleMarkAttachment> + '_ {
         self.marks.iter().flat_map(|(mark_anchor, mark_glyphs)| {
             mark_glyphs.iter().map(|&mark| SingleMarkAttachment {
@@ -71,7 +71,7 @@ impl GroupedMarkAttachment {
 
 #[derive(Clone, PartialEq, Default, Debug)]
 pub struct MarkAttachmentAction {
-    pub groups: Vec<GroupedMarkAttachment>,
+    pub groups: Vec<MarkAttachAction>,
 }
 
 impl MarkAttachmentAction {
@@ -79,41 +79,42 @@ impl MarkAttachmentAction {
         self.groups.iter().flat_map(|group| group.flatten())
     }
 
-    pub fn merge_flattened(&mut self, flattened: impl Iterator<Item = SingleMarkAttachment>) {
-        let mut group_ix_by_base: HashMap<(GlyphId, Anchor), usize> = self
-            .groups
-            .iter()
-            .enumerate()
-            .map(|(ix, group)| ((group.base, group.base_anchor.clone()), ix))
-            .collect();
-        for attachment in flattened {
-            let group_ix = if let Some(group_ix) =
-                group_ix_by_base.get(&(attachment.base, attachment.base_anchor.clone()))
-            {
-                *group_ix
-            } else {
-                let group_ix = self.groups.len();
-                self.groups.push(GroupedMarkAttachment {
-                    base: attachment.base,
-                    base_anchor: attachment.base_anchor.clone(),
-                    marks: Default::default(),
-                });
-                group_ix_by_base
-                    .insert((attachment.base, attachment.base_anchor.clone()), group_ix);
-                group_ix
-            };
-            let grouped_attachments = &mut self.groups[group_ix].marks;
-            if let Some(existing_group) = grouped_attachments
-                .iter_mut()
-                .find(|g| *g.0 == attachment.mark_anchor)
-            {
-                existing_group.1.insert(attachment.mark);
-            } else {
-                grouped_attachments
-                    .insert(attachment.mark_anchor.clone(), [attachment.mark].into());
-            }
-        }
-    }
+    // pub fn merge_flattened(&mut self, flattened: impl Iterator<Item = SingleMarkAttachment>) {
+    //     let mut group_ix_by_base: HashMap<(GlyphId, Anchor), usize> = self
+    //         .groups
+    //         .iter()
+    //         .enumerate()
+    //         .map(|(ix, group)| ((group.base, group.base_anchor.clone()), ix))
+    //         .collect();
+    //     for attachment in flattened {
+    //         let group_ix = if let Some(group_ix) =
+    //             group_ix_by_base.get(&(attachment.base, attachment.base_anchor.clone()))
+    //         {
+    //             *group_ix
+    //         } else {
+    //             let group_ix = self.groups.len();
+    //             self.groups.push(GroupedMarkAttachment {
+    //                 base: attachment.base,
+    //                 base_anchor: attachment.base_anchor.clone(),
+    //                 marks: Default::default(),
+    //             });
+    //             group_ix_by_base
+    //                 .insert((attachment.base, attachment.base_anchor.clone()), group_ix);
+    //             group_ix
+    //         };
+    //         let grouped_attachments = &mut self.groups[group_ix].marks;
+    //         if let Some(existing_group) = grouped_attachments
+    //             .iter_mut()
+    //             .find(|g| *g.0 == attachment.mark_anchor)
+    //         {
+    //             existing_group.1.insert(attachment.mark);
+    //         } else {
+    //             let single = BTreeSet::from([attachment.mark]);
+    //             grouped_attachments
+    //                 .insert(attachment.mark_anchor.clone());
+    //         }
+    //     }
+    // }
 
     // pub fn append_mark_base(
     //     &mut self,
@@ -174,6 +175,6 @@ impl MarkAttachmentAction {
 }
 
 pub enum PositionAction {
-    Adjustment(Vec<AdjustmentAction>),
+    Adjustment(Vec<AdjustAction>),
     MarkAttachment(MarkAttachmentAction),
 }

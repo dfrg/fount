@@ -7,3 +7,4 @@ edition = "2021"
 
 [dependencies]
 read-fonts = { git = "https://github.com/googlefonts/fontations" }
+smol_str = "0.2.0"

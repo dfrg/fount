@@ -3,8 +3,11 @@
 use read_fonts::{
     tables::{
         gdef::Gdef,
-        gpos::{Gpos, MarkBasePosFormat1, MarkMarkPosFormat1, PositionLookup, ValueRecord},
-        layout::{DeviceOrVariationIndex, LookupFlag},
+        gpos::{
+            Gpos, MarkBasePosFormat1, MarkMarkPosFormat1, PositionLookup, SinglePos, ValueRecord,
+        },
+        gsub::{Gsub, SingleSubst, SubstitutionLookup},
+        layout::{ChainedSequenceContext, DeviceOrVariationIndex, LookupFlag},
         variations::{DeltaSetIndex, ItemVariationStore},
     },
     types::{GlyphId, Tag},
@@ -12,18 +15,20 @@ use read_fonts::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use crate::{ContextualAction, FeatureUser, LigateAction, MarkFilter, ReplaceAction, Replacement};
+
 use super::filter::Filter;
+use super::layout::{GlyphList, GlyphSet, LayoutBuilder};
 use super::value::{Adjustment, Anchor, MasterDeltas, MasterLocations, Value};
-use super::{
-    ActionGroup, GroupedMarkAttachment, MarkAttachmentAction, PositionAction, PositionFeature,
-};
+use super::{Action, ActionGroup, Feature, Layout, MarkAttachAction, MarkAttachmentAction};
 
 #[derive(Default)]
 pub struct RaiseContext {
     master_locations: MasterLocations,
     deltas: HashMap<(u16, u16), MasterDeltas>,
-    mark_sets: Vec<BTreeSet<GlyphId>>,
-    mark_classes: HashMap<u16, BTreeSet<GlyphId>>,
+    mark_sets: Vec<GlyphSet>,
+    mark_classes: HashMap<u16, GlyphSet>,
+    layout_builder: LayoutBuilder,
 }
 
 impl RaiseContext {
@@ -57,13 +62,20 @@ impl RaiseContext {
         }
         if let Some(Ok(mark_sets)) = gdef.mark_glyph_sets_def() {
             for coverage in mark_sets.coverages().iter() {
-                cx.mark_sets.push(coverage?.iter().collect());
+                let set: BTreeSet<_> = coverage?.iter().collect();
+                let set = cx.layout_builder.glyph_set(&set);
+                cx.mark_sets.push(set);
             }
         }
-        if let Some(Ok(mark_classes)) = gdef.mark_attach_class_def() {
-            for (glyph, class) in mark_classes.iter() {
-                cx.mark_classes.entry(class).or_default().insert(glyph);
+        let mut mark_classes: HashMap<_, BTreeSet<GlyphId>> = Default::default();
+        if let Some(Ok(mark_class_def)) = gdef.mark_attach_class_def() {
+            for (glyph, class) in mark_class_def.iter() {
+                mark_classes.entry(class).or_default().insert(glyph);
             }
+        }
+        for (class, set) in mark_classes {
+            let set = cx.layout_builder.glyph_set(&set);
+            cx.mark_classes.insert(class, set);
         }
         Ok(cx)
     }
@@ -72,12 +84,12 @@ impl RaiseContext {
         self.deltas.get(&(outer_ix, inner_ix)).cloned()
     }
 
-    pub fn mark_glyph_set(&self, index: usize) -> Option<&BTreeSet<GlyphId>> {
-        self.mark_sets.get(index)
+    pub fn mark_glyph_set(&self, index: usize) -> Option<GlyphSet> {
+        self.mark_sets.get(index).cloned()
     }
 
-    pub fn marks_by_class(&self, class: u16) -> Option<&BTreeSet<GlyphId>> {
-        self.mark_classes.get(&class)
+    pub fn marks_by_class(&self, class: u16) -> Option<GlyphSet> {
+        self.mark_classes.get(&class).cloned()
     }
 }
 
@@ -158,15 +170,15 @@ impl RaiseContext {
         // attachment type indications.
         if flag.ignore_marks() {
             // Create an empty set
-            filter.mark_filter = Some(Default::default());
+            filter.marks = MarkFilter::IgnoreAll;
         } else if flag.use_mark_filtering_set() {
-            filter.mark_filter = Some(
+            filter.marks = MarkFilter::Allow(
                 self.mark_glyph_set(mark_filtering_set as usize)
                     .ok_or(ReadError::MalformedData("missing mark filtering set"))?
                     .clone(),
             );
         } else if let Some(attach_type) = flag.mark_attachment_type_mask() {
-            filter.mark_filter = Some(
+            filter.marks = MarkFilter::Allow(
                 self.marks_by_class(attach_type)
                     .ok_or(ReadError::MalformedData("invalid mark attachment type"))?
                     .clone(),
@@ -178,11 +190,115 @@ impl RaiseContext {
 
 /// GPOS.
 impl RaiseContext {
-    pub fn raise_gpos(&self, gpos: &Gpos) -> Result<Vec<PositionFeature>, ReadError> {
-        let mut features = vec![];
+    pub fn raise_gpos(&mut self, gpos: &Gpos, layout: &mut Layout) -> Result<(), ReadError> {
         let script_list = gpos.script_list()?;
         let feature_list = gpos.feature_list()?;
         let lookup_list = gpos.lookup_list()?;
+        let lookup_base = layout.action_groups.len();
+        for lookup in lookup_list.lookups().iter() {
+            let lookup = lookup?;
+            let mut group = ActionGroup::default();
+            match lookup {
+                PositionLookup::Single(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    // for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                    //     let action = self.raise_mark_to_base(&subtable)?;
+                    //     group.actions.push(PositionAction::MarkAttachment(action));
+                    // }
+                }
+                PositionLookup::Pair(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    // for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                    //     let action = self.raise_mark_to_base(&subtable)?;
+                    //     group.actions.push(PositionAction::MarkAttachment(action));
+                    // }
+                }
+                PositionLookup::MarkToBase(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                        let action = self.raise_mark_to_base(&subtable)?;
+                        for action in action.groups {
+                            group.actions.push(Action::MarkAttach(action))
+                        }
+                    }
+                }
+                PositionLookup::MarkToMark(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                        let action = self.raise_mark_to_mark(&subtable)?;
+                        for action in action.groups {
+                            group.actions.push(Action::MarkAttach(action))
+                        }
+                    }
+                }
+                PositionLookup::MarkToLig(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+                PositionLookup::Cursive(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+                PositionLookup::Contextual(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+                PositionLookup::ChainContextual(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter() {
+                        let subtable = subtable?;
+                        match subtable {
+                            ChainedSequenceContext::Format3(s) => {
+                                let mut input = vec![];
+                                for cov in s.input_coverages().iter() {
+                                    let cov = cov?;
+                                    input.push(self.layout_builder.glyph_set_from_coverage(&cov));
+                                }
+                                let mut backtrack = vec![];
+                                for cov in s.backtrack_coverages().iter() {
+                                    let cov = cov?;
+                                    backtrack
+                                        .push(self.layout_builder.glyph_set_from_coverage(&cov));
+                                }
+                                let mut lookahead = vec![];
+                                for cov in s.lookahead_coverages().iter() {
+                                    let cov = cov?;
+                                    lookahead
+                                        .push(self.layout_builder.glyph_set_from_coverage(&cov));
+                                }
+                                let actions = s
+                                    .seq_lookup_records()
+                                    .iter()
+                                    .map(|rec| {
+                                        (
+                                            rec.sequence_index(),
+                                            rec.lookup_list_index() + lookup_base as u16,
+                                        )
+                                    })
+                                    .collect();
+                                group.actions.push(Action::Contextual(ContextualAction {
+                                    backtrack,
+                                    input,
+                                    lookahead,
+                                    actions,
+                                }));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                PositionLookup::Extension(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+            }
+            layout.action_groups.push(group);
+        }
         for script in script_list.script_records() {
             let script_tag = script.script_tag();
             let script = script.script(script_list.offset_data())?;
@@ -216,73 +332,31 @@ impl RaiseContext {
                         .map(|ix| ix.get() as usize)
                         .collect::<Vec<_>>();
                     lookup_indices.sort();
-                    let mut feature = PositionFeature::default();
+                    let mut feature = Feature::default();
                     feature.script = script_tag;
                     feature.language = lang_tag;
                     feature.feature = feature_tag;
+                    let user = FeatureUser {
+                        script: script_tag,
+                        language: lang_tag,
+                        feature: feature_tag,
+                    };
                     for &lookup_ix in &lookup_indices {
-                        let lookup = lookup_list.lookups().get(lookup_ix)?;
-                        match lookup {
-                            PositionLookup::Single(lookup) => {
-                                let mut group = ActionGroup::default();
-                                group.filter = self.raise_lookup_flag(
-                                    lookup.lookup_flag(),
-                                    lookup.mark_filtering_set(),
-                                )?;
-                                // for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
-                                //     let action = self.raise_mark_to_base(&subtable)?;
-                                //     group.actions.push(PositionAction::MarkAttachment(action));
-                                // }
-                                feature.action_groups.push(group);
-                            }
-                            PositionLookup::Pair(lookup) => {
-                                let mut group = ActionGroup::default();
-                                group.filter = self.raise_lookup_flag(
-                                    lookup.lookup_flag(),
-                                    lookup.mark_filtering_set(),
-                                )?;
-                                // for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
-                                //     let action = self.raise_mark_to_base(&subtable)?;
-                                //     group.actions.push(PositionAction::MarkAttachment(action));
-                                // }
-                                feature.action_groups.push(group);
-                            }
-                            PositionLookup::MarkToBase(lookup) => {
-                                let mut group = ActionGroup::default();
-                                group.filter = self.raise_lookup_flag(
-                                    lookup.lookup_flag(),
-                                    lookup.mark_filtering_set(),
-                                )?;
-                                for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
-                                    let action = self.raise_mark_to_base(&subtable)?;
-                                    group.actions.push(PositionAction::MarkAttachment(action));
-                                }
-                                feature.action_groups.push(group);
-                            }
-                            PositionLookup::MarkToMark(lookup) => {
-                                let mut group = ActionGroup::default();
-                                group.filter = self.raise_lookup_flag(
-                                    lookup.lookup_flag(),
-                                    lookup.mark_filtering_set(),
-                                )?;
-                                for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
-                                    let action = self.raise_mark_to_mark(&subtable)?;
-                                    group.actions.push(PositionAction::MarkAttachment(action));
-                                }
-                                feature.action_groups.push(group);
-                            }
-                            _ => {}
-                        }
+                        let lookup_ix = lookup_ix as usize;
+                        feature.action_groups.push(lookup_ix);
+                        layout.action_groups[lookup_ix + lookup_base]
+                            .feature_users
+                            .insert(user);
                     }
-                    features.push(feature);
+                    layout.features.push(feature);
                 }
             }
         }
-        Ok(features)
+        Ok(())
     }
 
     pub fn raise_mark_to_base(
-        &self,
+        &mut self,
         subtable: &MarkBasePosFormat1,
     ) -> Result<MarkAttachmentAction, ReadError> {
         let mut res = MarkAttachmentAction::default();
@@ -304,7 +378,7 @@ impl RaiseContext {
                 };
                 let base_anchor = base_anchor?;
                 let base_anchor = self.raise_anchor(&base_anchor)?;
-                let mut group = GroupedMarkAttachment {
+                let mut group = MarkAttachAction {
                     base: base_glyph,
                     base_anchor: base_anchor,
                     marks: Default::default(),
@@ -323,7 +397,10 @@ impl RaiseContext {
                     marks.entry(mark_anchor).or_default().insert(*mark_glyph);
                 }
                 if !marks.is_empty() {
-                    group.marks.append(&mut marks);
+                    for (anchor, marks) in marks {
+                        let set = self.layout_builder.glyph_set(&marks);
+                        group.marks.insert(anchor, set);
+                    }
                     res.groups.push(group);
                 }
             }
@@ -332,7 +409,7 @@ impl RaiseContext {
     }
 
     pub fn raise_mark_to_mark(
-        &self,
+        &mut self,
         subtable: &MarkMarkPosFormat1,
     ) -> Result<MarkAttachmentAction, ReadError> {
         let mut res = MarkAttachmentAction::default();
@@ -354,7 +431,7 @@ impl RaiseContext {
                 };
                 let base_anchor = base_anchor?;
                 let base_anchor = self.raise_anchor(&base_anchor)?;
-                let mut group = GroupedMarkAttachment {
+                let mut group = MarkAttachAction {
                     base: base_glyph,
                     base_anchor: base_anchor,
                     marks: Default::default(),
@@ -373,12 +450,244 @@ impl RaiseContext {
                     marks.entry(mark_anchor).or_default().insert(*mark_glyph);
                 }
                 if !marks.is_empty() {
-                    group.marks.append(&mut marks);
+                    for (anchor, marks) in marks {
+                        let set = self.layout_builder.glyph_set(&marks);
+                        group.marks.insert(anchor, set);
+                    }
                     res.groups.push(group);
                 }
             }
         }
         Ok(res)
+    }
+}
+
+/// GSUB
+impl RaiseContext {
+    pub fn raise_gsub(&mut self, gsub: &Gsub, layout: &mut Layout) -> Result<(), ReadError> {
+        let script_list = gsub.script_list()?;
+        let feature_list = gsub.feature_list()?;
+        let lookup_list = gsub.lookup_list()?;
+        let lookup_base = layout.action_groups.len();
+        for lookup in lookup_list.lookups().iter() {
+            let lookup = lookup?;
+            let mut group = ActionGroup::default();
+            match lookup {
+                SubstitutionLookup::Single(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                        match subtable {
+                            SingleSubst::Format1(s) => {
+                                let delta = s.delta_glyph_id() as i32;
+                                for target in s.coverage()?.iter() {
+                                    let replacement = target.to_u16() as i32 + delta;
+                                    group.actions.push(Action::Replace(ReplaceAction {
+                                        target,
+                                        replacement: Replacement::Single(GlyphId::new(
+                                            replacement as u16,
+                                        )),
+                                    }));
+                                }
+                            }
+                            SingleSubst::Format2(s) => {
+                                for (target, subst) in
+                                    s.coverage()?.iter().zip(s.substitute_glyph_ids())
+                                {
+                                    group.actions.push(Action::Replace(ReplaceAction {
+                                        target,
+                                        replacement: Replacement::Single(subst.get()),
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                }
+                SubstitutionLookup::Multiple(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                        for (target, subst) in
+                            subtable.coverage()?.iter().zip(subtable.sequences().iter())
+                        {
+                            let subst = subst?.substitute_glyph_ids();
+                            let list: Vec<_> = subst.iter().map(|g| g.get()).collect();
+                            let replacement = match list.len() {
+                                0 => Replacement::Delete,
+                                1 => Replacement::Single(list[0]),
+                                _ => Replacement::Multiple(self.layout_builder.glyph_list(&list)),
+                            };
+                            group.actions.push(Action::Replace(ReplaceAction {
+                                target,
+                                replacement,
+                            }));
+                        }
+                    }
+                }
+                SubstitutionLookup::Alternate(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                        for (target, subst) in subtable
+                            .coverage()?
+                            .iter()
+                            .zip(subtable.alternate_sets().iter())
+                        {
+                            let subst = subst?.alternate_glyph_ids();
+                            let list: Vec<_> = subst.iter().map(|g| g.get()).collect();
+                            let replacement = match list.len() {
+                                0 => Replacement::Delete,
+                                1 => Replacement::Single(list[0]),
+                                _ => Replacement::Multiple(self.layout_builder.glyph_list(&list)),
+                            };
+                            group.actions.push(Action::Replace(ReplaceAction {
+                                target,
+                                replacement,
+                            }));
+                        }
+                    }
+                }
+                SubstitutionLookup::Ligature(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter().filter_map(|s| s.ok()) {
+                        for (target, lig_set) in subtable
+                            .coverage()?
+                            .iter()
+                            .zip(subtable.ligature_sets().iter())
+                        {
+                            for lig_set in lig_set?.ligatures().iter() {
+                                let lig_set = lig_set?;
+                                let rest = lig_set
+                                    .component_glyph_ids()
+                                    .iter()
+                                    .map(|g| g.get())
+                                    .collect();
+                                let components = self.layout_builder.glyph_list(&rest);
+                                let replacement = lig_set.ligature_glyph();
+                                group.actions.push(Action::Ligate(LigateAction {
+                                    target,
+                                    components,
+                                    replacement,
+                                }));
+                            }
+                        }
+                    }
+                }
+                SubstitutionLookup::Reverse(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+                SubstitutionLookup::Contextual(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+                SubstitutionLookup::ChainContextual(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                    for subtable in lookup.subtables().iter() {
+                        let subtable = subtable?;
+                        match subtable {
+                            ChainedSequenceContext::Format3(s) => {
+                                let mut input = vec![];
+                                for cov in s.input_coverages().iter() {
+                                    let cov = cov?;
+                                    input.push(self.layout_builder.glyph_set_from_coverage(&cov));
+                                }
+                                let mut backtrack = vec![];
+                                for cov in s.backtrack_coverages().iter() {
+                                    let cov = cov?;
+                                    backtrack
+                                        .push(self.layout_builder.glyph_set_from_coverage(&cov));
+                                }
+                                let mut lookahead = vec![];
+                                for cov in s.lookahead_coverages().iter() {
+                                    let cov = cov?;
+                                    lookahead
+                                        .push(self.layout_builder.glyph_set_from_coverage(&cov));
+                                }
+                                let actions = s
+                                    .seq_lookup_records()
+                                    .iter()
+                                    .map(|rec| {
+                                        (
+                                            rec.sequence_index(),
+                                            rec.lookup_list_index() + lookup_base as u16,
+                                        )
+                                    })
+                                    .collect();
+                                group.actions.push(Action::Contextual(ContextualAction {
+                                    backtrack,
+                                    input,
+                                    lookahead,
+                                    actions,
+                                }));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                SubstitutionLookup::Extension(lookup) => {
+                    group.filter =
+                        self.raise_lookup_flag(lookup.lookup_flag(), lookup.mark_filtering_set())?;
+                }
+            }
+            layout.action_groups.push(group);
+        }
+        for script in script_list.script_records() {
+            let script_tag = script.script_tag();
+            let script = script.script(script_list.offset_data())?;
+            for (lang_tag, lang) in script
+                .lang_sys_records()
+                .iter()
+                .map(|rec| (rec.lang_sys_tag(), rec.lang_sys(script.offset_data()).ok()))
+                .chain(
+                    script
+                        .default_lang_sys()
+                        .transpose()
+                        .ok()
+                        .flatten()
+                        .map(|lang| (Tag::new(b"DFLT"), Some(lang))),
+                )
+            {
+                let Some(lang) = lang else {
+                    continue;
+                };
+                for feature_ix in lang.feature_indices() {
+                    let feature_ix = feature_ix.get() as usize;
+                    let feature = feature_list
+                        .feature_records()
+                        .get(feature_ix)
+                        .ok_or(ReadError::OutOfBounds)?;
+                    let feature_tag = feature.feature_tag();
+                    let feature = feature.feature(feature_list.offset_data())?;
+                    let mut lookup_indices = feature
+                        .lookup_list_indices()
+                        .iter()
+                        .map(|ix| ix.get() as usize)
+                        .collect::<Vec<_>>();
+                    lookup_indices.sort();
+                    let mut feature = Feature::default();
+                    feature.script = script_tag;
+                    feature.language = lang_tag;
+                    feature.feature = feature_tag;
+                    let user = FeatureUser {
+                        script: script_tag,
+                        language: lang_tag,
+                        feature: feature_tag,
+                    };
+                    for &lookup_ix in &lookup_indices {
+                        let lookup_ix = lookup_ix as usize;
+                        feature.action_groups.push(lookup_ix);
+                        layout.action_groups[lookup_ix + lookup_base]
+                            .feature_users
+                            .insert(user);
+                    }
+                    layout.features.push(feature);
+                }
+            }
+        }
+        Ok(())
     }
 }
 
