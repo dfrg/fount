@@ -9,7 +9,8 @@ use read_fonts::{
 
 fn main() {
     //let font_path = "c:/work/content/fonts/NotoRashiHebrew-Regular.ttf";
-    let font_path = "c:/work/content/fonts/googlefonts/ofl/oswald/Oswald[wght].ttf";
+    // let font_path = "c:/work/content/fonts/googlefonts/ofl/oswald/Oswald[wght].ttf";
+    let font_path = "c:/work/content/fonts/notofonts/fonts/NotoSansMyanmar/full/ttf/NotoSansMyanmar-Regular.ttf";
     let font_data = std::fs::read(font_path).unwrap();
     let font = FontRef::new(&font_data).unwrap();
     let mark2base_lookups = collect_mark_to_base_lookups(&font).unwrap();

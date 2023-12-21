@@ -137,7 +137,9 @@ impl Layout {
         name_map: &NameMap,
         group: &ActionGroup,
     ) -> fmt::Result {
-        writeln!(f, "{:?} {}", group.feature_users, group.filter)?;
+        write!(f, "{:?} ", group.feature_users)?;
+        group.filter.pretty_print(f, name_map)?;
+        writeln!(f)?;
         for action in &group.actions {
             match action {
                 Action::Replace(replace) => {
