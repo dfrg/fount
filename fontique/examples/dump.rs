@@ -3,30 +3,30 @@ fn main() {
     let start = std::time::Instant::now();
     let mut fonts = Collection::new(Default::default());
     let load_time = start.elapsed();
-    let fam = fonts.fallback_families(b"Latn").next().unwrap();
-    let _ = fonts
-        .family(fam)
-        .unwrap()
-        .match_font(Stretch::NORMAL, Style::Normal, Weight::SEMI_BOLD, true)
-        .unwrap();
-    let font_select_time = start.elapsed();
+    // let fam = fonts.fallback_families(b"Latn").next().unwrap();
+    // let _ = fonts
+    //     .family(fam)
+    //     .unwrap()
+    //     .match_font(Stretch::NORMAL, Style::Normal, Weight::SEMI_BOLD, true)
+    //     .unwrap();
+    // let font_select_time = start.elapsed();
     println!("init: {:?}", load_time);
-    println!("init + select latin bold: {:?}", font_select_time);
+    // println!("init + select latin bold: {:?}", font_select_time);
     println!("=====================================");
 
-    let sysui = fonts
-        .generic_families(GenericFamily::Monospace)
-        .next()
-        .unwrap();
-    let sysui = fonts.family(sysui).unwrap();
-    println!("{}", sysui.name());
-    let stretch = Stretch::SEMI_CONDENSED;
-    let style = Style::Italic;
-    let weight = Weight::LIGHT;
-    let sysui_font = sysui.match_font(stretch, style, weight, true).unwrap();
-    let synth = sysui_font.synthesis(stretch, style, weight);
-    println!("{sysui_font:?}");
-    println!("{synth:?}");
+    // let sysui = fonts
+    //     .generic_families(GenericFamily::Monospace)
+    //     .next()
+    //     .unwrap();
+    // let sysui = fonts.family(sysui).unwrap();
+    // println!("{}", sysui.name());
+    // let stretch = Stretch::SEMI_CONDENSED;
+    // let style = Style::Italic;
+    // let weight = Weight::LIGHT;
+    // let sysui_font = sysui.match_font(stretch, style, weight, true).unwrap();
+    // let synth = sysui_font.synthesis(stretch, style, weight);
+    // println!("{sysui_font:?}");
+    // println!("{synth:?}");
 
     let mut results = vec![];
     let han_locales = ["zh-Hans", "zh-Hant", "zh-Hant-HK", "ja", "ko", "zh-tw"];

@@ -38,6 +38,10 @@ impl SystemFonts {
             None => {}
         }
         let raw_family = self.raw_families.get(&id)?;
+        if raw_family.fonts.is_empty() {
+            // TODO: maybe catch this earlier?
+            return None;
+        }
         let mut fonts: smallvec::SmallVec<[FontInfo; 4]> = Default::default();
         fonts.reserve(raw_family.fonts.len());
         fonts.extend(
