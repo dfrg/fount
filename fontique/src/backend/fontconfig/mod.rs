@@ -78,6 +78,24 @@ impl SystemFonts {
         // First, parse the raw config files
         let mut config = Config::default();
         config::parse_config("/etc/fonts/fonts.conf".as_ref(), &mut config);
+        if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
+            config::parse_config(
+                std::path::PathBuf::from(xdg_config_home)
+                    .as_path()
+                    .join("fontconfig/fonts.conf")
+                    .as_path(),
+                &mut config,
+            );
+        } else if let Ok(user_home) = std::env::var("HOME") {
+            config::parse_config(
+                std::path::PathBuf::from(user_home)
+                    .as_path()
+                    .join(".config/fontconfig/fonts.conf")
+                    .as_path(),
+                &mut config,
+            );
+        }
+
         // Extract all font/family metadata from the cache files
         cache::parse_caches(&config.cache_dirs, |font| {
             //if !font.style.is_empty() && font.family.ends_with(&font.style) {
@@ -219,7 +237,8 @@ fn find_best_family<'a>(
             let coverage = font.coverage.compute_for_str(text);
             if coverage == text_len {
                 return Some(id);
-            } else if coverage > best_coverage {
+            }
+            if coverage > best_coverage {
                 best_id = Some(id);
                 best_coverage = coverage;
             }
