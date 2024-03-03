@@ -1,2 +1,3 @@
 [workspace]
-members = ["archived/fount", "archived/fello"]
+members = ["archived/fount", "archived/fello", "fontique"]
+resolver = "2"
