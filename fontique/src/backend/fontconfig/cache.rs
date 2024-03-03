@@ -1,4 +1,4 @@
-use super::cache_parser::*;
+use fontconfig_cache_parser::*;
 use std::io::Read;
 use std::path::PathBuf;
 
