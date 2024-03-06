@@ -7,8 +7,6 @@ use super::{
 };
 
 mod cache;
-#[allow(unused)]
-mod cache_parser;
 mod config;
 
 /// Raw access to the collection of local system fonts.
