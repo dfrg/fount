@@ -2,6 +2,7 @@ use hashbrown::HashMap;
 use std::{path::PathBuf, sync::Arc};
 
 use super::{
+    super::{Stretch, Style, Weight},
     FallbackKey, FamilyId, FamilyInfo, FamilyName, FamilyNameMap, FontInfo, GenericFamily,
     GenericFamilyMap, Script, SourceInfo, SourcePathMap,
 };
@@ -42,12 +43,13 @@ impl SystemFonts {
         }
         let mut fonts: smallvec::SmallVec<[FontInfo; 4]> = Default::default();
         fonts.reserve(raw_family.fonts.len());
-        fonts.extend(
-            raw_family
-                .fonts
-                .iter()
-                .filter_map(|font| FontInfo::from_source(font.source.clone(), font.index)),
-        );
+        fonts.extend(raw_family.fonts.iter().filter_map(|font| {
+            let mut info = FontInfo::from_source(font.source.clone(), font.index);
+            if let Some(info) = info.as_mut() {
+                info.maybe_override_attributes(font.stretch, font.style, font.weight);
+            }
+            info
+        }));
         let family = FamilyInfo::new(raw_family.name.clone(), fonts);
         self.family_map.insert(id, Some(family.clone()));
         Some(family)
@@ -120,6 +122,9 @@ impl SystemFonts {
             raw_family.fonts.push(RawFont {
                 source,
                 index: font.index,
+                stretch: font.stretch,
+                style: font.style,
+                weight: font.weight,
                 coverage: font.coverage.clone(),
             });
         });
@@ -257,6 +262,9 @@ struct RawFamily {
 struct RawFont {
     source: SourceInfo,
     index: u32,
+    stretch: Stretch,
+    style: Style,
+    weight: Weight,
     coverage: cache::Coverage,
 }
 

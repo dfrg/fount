@@ -200,6 +200,18 @@ impl FontInfo {
             attr_axes,
         })
     }
+
+    pub(crate) fn maybe_override_attributes(&mut self, stretch: Stretch, style: Style, weight: Weight) {
+        if self.stretch == Stretch::default() {
+            self.stretch = stretch;
+        }
+        if self.style == Style::default() {
+            self.style = style;
+        }
+        if self.weight == Weight::default() {
+            self.weight = weight;
+        }
+    }
 }
 
 const WEIGHT_AXIS: u8 = 0x01;

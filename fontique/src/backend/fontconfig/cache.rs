@@ -1,23 +1,78 @@
+use crate::{Stretch, Style, Weight};
 use fontconfig_cache_parser::*;
 use std::io::Read;
 use std::path::PathBuf;
 
+impl Stretch {
+    fn from_fc(width: i32) -> Self {
+        match width {
+            63 => Self::EXTRA_CONDENSED,
+            87 => Self::SEMI_CONDENSED,
+            113 => Self::SEMI_EXPANDED,
+            _ => Self::from_ratio(width as f32 / 100.0),
+        }
+    }
+}
+
+impl Style {
+    fn from_fc(slant: i32) -> Self {
+        match slant {
+            100 => Self::Italic,
+            110 => Self::Oblique(None),
+            _ => Self::Normal,
+        }
+    }
+}
+
+impl Weight {
+    fn from_fc(weight: i32) -> Self {
+        const MAP: &[(i32, i32)] = &[
+            (0, 0),
+            (100, 0),
+            (200, 40),
+            (300, 50),
+            (350, 55),
+            (380, 75),
+            (400, 80),
+            (500, 100),
+            (600, 180),
+            (700, 200),
+            (800, 205),
+            (900, 210),
+            (1000, 215),
+        ];
+        for (i, (ot, fc)) in MAP.iter().skip(1).enumerate() {
+            if weight == *fc {
+                return Self::new(*ot as f32);
+            }
+            if weight < *fc {
+                let weight = weight as f32;
+                let fc_a = MAP[i - 1].1 as f32;
+                let fc_b = *fc as f32;
+                let ot_a = MAP[i - 1].1 as f32;
+                let ot_b = *ot as f32;
+                let t = (fc_a - fc_b) / (weight - fc_a);
+                return Self::new(ot_a + (ot_b - ot_a) * t);
+            }
+        }
+        Self::new(1000.0)
+    }
+}
+
 #[derive(Default)]
 pub struct CachedFont {
     pub family: String,
-    pub style: String,
     pub path: PathBuf,
     pub index: u32,
-    pub slant: i32,
-    pub weight: i32,
-    pub width: i32,
+    pub stretch: Stretch,
+    pub style: Style,
+    pub weight: Weight,
     pub coverage: Coverage,
 }
 
 impl CachedFont {
     fn clear(&mut self) {
         self.family.clear();
-        self.style.clear();
         self.path.clear();
         self.index = 0;
         self.coverage.clear();
@@ -73,16 +128,6 @@ fn parse_font(pattern: &Pattern, font: &mut CachedFont) -> Option<()> {
                     }
                 }
             }
-            Object::Style => {
-                for val in elt.values().ok()? {
-                    let val = val.ok()?;
-                    if let Value::String(s) = val {
-                        font.style.clear();
-                        font.style
-                            .push_str(core::str::from_utf8(s.str().ok()?).ok()?);
-                    }
-                }
-            }
             Object::File => {
                 for val in elt.values().ok()? {
                     let val = val.ok()?;
@@ -98,21 +143,21 @@ fn parse_font(pattern: &Pattern, font: &mut CachedFont) -> Option<()> {
             Object::Slant => {
                 for val in elt.values().ok()? {
                     if let Value::Int(i) = val.ok()? {
-                        font.slant = i as _;
+                        font.style = Style::from_fc(i as _);
                     }
                 }
             }
             Object::Weight => {
                 for val in elt.values().ok()? {
                     if let Value::Int(i) = val.ok()? {
-                        font.weight = i as _;
+                        font.weight = Weight::from_fc(i as _);
                     }
                 }
             }
             Object::Width => {
                 for val in elt.values().ok()? {
                     if let Value::Int(i) = val.ok()? {
-                        font.width = i as _;
+                        font.stretch = Stretch::from_fc(i as _);
                     }
                 }
             }
