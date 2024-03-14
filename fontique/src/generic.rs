@@ -65,7 +65,7 @@ impl GenericFamily {
             "sans-serif" => Self::SansSerif,
             "monospace" => Self::Monospace,
             "cursive" => Self::Cursive,
-            "fantasy" => Self::FangSong,
+            "fantasy" => Self::Fantasy,
             "system-ui" => Self::SystemUi,
             "ui-serif" => Self::UiSerif,
             "ui-sans-serif" => Self::UiSansSerif,
