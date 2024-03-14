@@ -1,5 +1,11 @@
 //! Support for working with font collections.
 
+mod query;
+
+pub use query::{Query, QueryFamily, QueryFont, QueryStatus};
+
+use crate::SourceCache;
+
 use super::{
     backend::SystemFonts,
     fallback::{FallbackKey, FallbackMap},
@@ -50,6 +56,119 @@ impl Default for CollectionOptions {
 /// Collection of fonts.
 #[derive(Clone, Default)]
 pub struct Collection {
+    inner: Inner,
+    query_state: query::QueryState,
+}
+
+impl Collection {
+    /// Creates a new collection with the given options.
+    pub fn new(options: CollectionOptions) -> Self {
+        Self {
+            inner: Inner::new(options),
+            query_state: Default::default(),
+        }
+    }
+
+    /// Returns an iterator over all available family names in the collection.
+    ///
+    /// This includes both system and registered fonts.
+    pub fn family_names(&mut self) -> impl Iterator<Item = &str> + '_ + Clone {
+        self.inner.family_names()
+    }
+
+    /// Returns the family identifier for the given family name.
+    pub fn family_id(&mut self, name: &str) -> Option<FamilyId> {
+        self.inner.family_id(name)
+    }
+
+    /// Returns the family name for the given family identifier.
+    pub fn family_name(&mut self, id: FamilyId) -> Option<&str> {
+        self.inner.family_name(id)
+    }
+
+    /// Returns the family object for the given family identifier.
+    pub fn family(&mut self, id: FamilyId) -> Option<FamilyInfo> {
+        self.inner.family(id)
+    }
+
+    /// Returns the family object for the given name.
+    pub fn family_by_name(&mut self, name: &str) -> Option<FamilyInfo> {
+        self.inner.family_by_name(name)
+    }
+
+    /// Returns an iterator over the family identifiers for the given
+    /// generic family.
+    pub fn generic_families(
+        &mut self,
+        family: GenericFamily,
+    ) -> impl Iterator<Item = FamilyId> + '_ + Clone {
+        self.inner.generic_families(family)
+    }
+
+    /// Replaces the set of family identifers associated with the given generic
+    /// family.
+    pub fn set_generic_families(
+        &mut self,
+        generic: GenericFamily,
+        families: impl Iterator<Item = FamilyId>,
+    ) {
+        self.inner.set_generic_families(generic, families)
+    }
+
+    /// Appends the set of family identifers to the given generic family.
+    pub fn append_generic_families(
+        &mut self,
+        generic: GenericFamily,
+        families: impl Iterator<Item = FamilyId>,
+    ) {
+        self.inner.append_generic_families(generic, families)
+    }
+
+    /// Returns an iterator over the fallback families for the given
+    /// key.
+    pub fn fallback_families(
+        &mut self,
+        key: impl Into<FallbackKey>,
+    ) -> impl Iterator<Item = FamilyId> + '_ + Clone {
+        self.inner.fallback_families(key)
+    }
+
+    /// Replaces the set of family identifers associated with the fallback
+    /// key.
+    pub fn set_fallbacks(
+        &mut self,
+        key: impl Into<FallbackKey>,
+        families: impl Iterator<Item = FamilyId>,
+    ) -> bool {
+        self.inner.set_fallbacks(key, families)
+    }
+
+    /// Appends the set of family identifers to the given fallback key.
+    pub fn append_fallbacks(
+        &mut self,
+        key: impl Into<FallbackKey>,
+        families: impl Iterator<Item = FamilyId>,
+    ) -> bool {
+        self.inner.append_fallbacks(key, families)
+    }
+
+    /// Returns an object for selecting fonts from this collection.
+    pub fn query<'a>(&'a mut self, source_cache: &'a mut SourceCache) -> Query<'a> {
+        Query::new(self, source_cache)
+    }
+
+    /// Registers all fonts that exist in the given data.
+    ///
+    /// Returns a list of pairs each containing the family identifier and fonts
+    /// added to that family.
+    pub fn register_fonts(&mut self, data: Vec<u8>) -> Vec<(FamilyId, Vec<FontInfo>)> {
+        self.inner.register_fonts(data)
+    }
+}
+
+/// Collection of fonts.
+#[derive(Clone, Default)]
+struct Inner {
     system: Option<System>,
     data: CommonData,
     #[allow(unused)]
@@ -59,7 +178,7 @@ pub struct Collection {
     fallback_cache: FallbackCache,
 }
 
-impl Collection {
+impl Inner {
     /// Creates a new collection with the given options.
     pub fn new(options: CollectionOptions) -> Self {
         let system = options.system_fonts.then(System::new);

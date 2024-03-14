@@ -24,7 +24,7 @@ pub use icu_locid::LanguageIdentifier as Language;
 pub use peniko::Blob;
 
 pub use attributes::{Attributes, Stretch, Style, Weight};
-pub use collection::{Collection, CollectionOptions};
+pub use collection::{Collection, CollectionOptions, Query, QueryFamily, QueryFont, QueryStatus};
 pub use fallback::FallbackKey;
 pub use family::{FamilyId, FamilyInfo};
 pub use font::{AxisInfo, FontInfo, Synthesis};
