@@ -54,7 +54,7 @@ impl Default for CollectionOptions {
 }
 
 /// Collection of fonts.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Collection {
     inner: Inner,
     query_state: query::QueryState,
@@ -166,8 +166,14 @@ impl Collection {
     }
 }
 
+impl Default for Collection {
+    fn default() -> Self {
+        Self::new(Default::default())
+    }
+}
+
 /// Collection of fonts.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct Inner {
     system: Option<System>,
     data: CommonData,
