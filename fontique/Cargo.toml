@@ -13,7 +13,7 @@ std = ["dep:memmap2"]
 smallvec = "1.10.0"
 memmap2 = { version = "0.5", optional = true }
 unicode-script = { version = "0.5.5", optional = true }
-read-fonts = { version = "0.15.5", default-features = false }
+read-fonts = { version = "0.16.0", default-features = false }
 peniko = { version = "0.1.0", default-features = false, features = ["libm"] }
 icu_properties = "1.4.0"
 icu_locid = "1.4.0"
