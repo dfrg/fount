@@ -54,9 +54,9 @@ impl GenericFamily {
     ///
     /// # Example
     /// ```
-    /// # use parley_ng::style::properties::font::GenericFontFamily;
-    /// assert_eq!(GenericFontFamily::parse("sans-serif"), Some(GenericFontFamily::SansSerif));
-    /// assert_eq!(GenericFontFamily::parse("Arial"), None);
+    /// # use fontique::GenericFamily;
+    /// assert_eq!(GenericFamily::parse("sans-serif"), Some(GenericFamily::SansSerif));
+    /// assert_eq!(GenericFamily::parse("Arial"), None);
     /// ```
     pub fn parse(s: &str) -> Option<Self> {
         let s = s.trim();
@@ -65,6 +65,7 @@ impl GenericFamily {
             "sans-serif" => Self::SansSerif,
             "monospace" => Self::Monospace,
             "cursive" => Self::Cursive,
+            "fantasy" => Self::FangSong,
             "system-ui" => Self::SystemUi,
             "ui-serif" => Self::UiSerif,
             "ui-sans-serif" => Self::UiSansSerif,
