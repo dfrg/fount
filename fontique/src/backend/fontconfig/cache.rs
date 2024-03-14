@@ -8,6 +8,9 @@ pub struct CachedFont {
     pub style: String,
     pub path: PathBuf,
     pub index: u32,
+    pub slant: i32,
+    pub weight: i32,
+    pub width: i32,
     pub coverage: Coverage,
 }
 
@@ -89,6 +92,27 @@ fn parse_font(pattern: &Pattern, font: &mut CachedFont) -> Option<()> {
                         if font.path.extension() == Some(std::ffi::OsStr::new("t1")) {
                             return None;
                         }
+                    }
+                }
+            }
+            Object::Slant => {
+                for val in elt.values().ok()? {
+                    if let Value::Int(i) = val.ok()? {
+                        font.slant = i as _;
+                    }
+                }
+            }
+            Object::Weight => {
+                for val in elt.values().ok()? {
+                    if let Value::Int(i) = val.ok()? {
+                        font.weight = i as _;
+                    }
+                }
+            }
+            Object::Width => {
+                for val in elt.values().ok()? {
+                    if let Value::Int(i) = val.ok()? {
+                        font.width = i as _;
                     }
                 }
             }

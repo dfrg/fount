@@ -268,8 +268,7 @@ impl FamilyEntry {
 
     fn fonts_with_attrs<'a>(
         &'a self,
-    ) -> impl DoubleEndedIterator<Item = &(FontId, Stretch, Weight, Style)> + Clone + 'a
-    {
+    ) -> impl DoubleEndedIterator<Item = &(FontId, Stretch, Weight, Style)> + Clone + 'a {
         let fonts = match &self.kind {
             FontFamilyKind::Static(_, fonts) => *fonts,
             FontFamilyKind::Dynamic(data) => &data.fonts,
