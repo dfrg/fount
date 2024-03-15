@@ -86,6 +86,7 @@ impl SystemFonts {
         // First, parse the raw config files
         let mut config = Config::default();
         config::parse_config("/etc/fonts/fonts.conf".as_ref(), &mut config);
+        config::parse_config("/etc/fonts/local.conf".as_ref(), &mut config);
         if let Ok(xdg_config_home) = std::env::var("XDG_CONFIG_HOME") {
             config::parse_config(
                 std::path::PathBuf::from(xdg_config_home)
