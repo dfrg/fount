@@ -49,8 +49,16 @@ impl SystemFonts {
     pub fn new() -> Self {
         let collection = FontCollection::get_system(false);
         let mut name_map = FamilyNameMap::default();
-        for name in collection.families_iter().map(|family| family.name()) {
-            name_map.get_or_insert(&name);
+        for family in collection.families_iter() {
+            if let Some(names) = all_family_names(&family) {
+                let [first_name, other_names @ ..] = names.as_slice() else {
+                    continue;
+                };
+                let id = name_map.get_or_insert(&first_name).id();
+                for other_name in other_names {
+                    name_map.add_alias(id, &other_name);
+                }
+            }
         }
         let mut generic_families = GenericFamilyMap::default();
         for (family, names) in DEFAULT_GENERIC_FAMILIES {
@@ -206,4 +214,32 @@ impl TextAnalysisSourceMethods for TextAnalysisData<'_> {
     fn get_paragraph_reading_direction(&self) -> DWRITE_READING_DIRECTION {
         DWRITE_READING_DIRECTION_LEFT_TO_RIGHT
     }
+}
+
+fn all_family_names(family: &dwrote::FontFamily) -> Option<Vec<String>> {
+    use winapi::um::dwrite::IDWriteLocalizedStrings;
+    let mut names = vec![];
+    unsafe {
+        let mut family_names: *mut IDWriteLocalizedStrings = std::ptr::null_mut();
+        if (*family.as_ptr()).GetFamilyNames(&mut family_names) != 0 {
+            return None;
+        }
+        let family_names = ComPtr::from_raw(family_names);
+        let count = family_names.GetCount();
+        let mut buf = vec![];
+        for i in 0..count {
+            let mut len = 0u32;
+            if family_names.GetStringLength(i, &mut len) != 0 {
+                continue;
+            }
+            buf.clear();
+            buf.resize(len as usize + 1, 0);
+            if family_names.GetString(i, buf.as_mut_ptr(), len + 1) != 0 {
+                continue;
+            }
+            buf.pop();
+            names.push(String::from_utf16_lossy(&buf))
+        }
+    }
+    Some(names)
 }

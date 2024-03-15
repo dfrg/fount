@@ -96,6 +96,9 @@ fn main() {
 }
 
 fn dump_family(family: &fontique::FamilyInfo) {
+    if family.fonts().is_empty() {
+        return;
+    }
     println!("[{}]", family.name());
     let default_font = family.default_font().unwrap();
     for font in family.fonts() {
