@@ -117,7 +117,7 @@ fn parse_font(
     name_free_list: &mut Vec<String>,
     font: &mut CachedFont,
 ) -> Option<()> {
-    name_free_list.extend(font.family.drain());
+    name_free_list.append(&mut font.family);
     font.clear();
     for elt in pattern.elts().ok()? {
         let Ok(obj) = elt.object() else {

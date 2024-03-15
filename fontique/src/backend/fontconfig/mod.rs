@@ -106,11 +106,13 @@ impl SystemFonts {
 
         // Extract all font/family metadata from the cache files
         cache::parse_caches(&config.cache_dirs, |font| {
-            let [first_name, other_names..] = font.family.as_slice();
+            let [first_name, other_names @ ..] = font.family.as_slice() else {
+                return;
+            };
             let family_name = name_map.get_or_insert(strip_rbiz(first_name));
             let id = family_name.id();
             for other_name in other_names {
-                name_map.add_alias(id, other_name);
+                name_map.add_alias(id, strip_rbiz(other_name));
             }
             let raw_family = raw_families.entry(id).or_insert_with(|| RawFamily {
                 name: family_name,
