@@ -69,6 +69,22 @@ impl FamilyNameMap {
         }
     }
 
+    /// Adds `name` as an alias for the given family identifier.
+    #[allow(unused)]
+    pub fn add_alias(&mut self, id: FamilyId, name: &str) {
+        if self.id_map.contains_key(&id) {
+            let key = NameKey::from_str(name);
+            if self.name_map.contains_key(key.as_bytes()) {
+                return;
+            }
+            let new_name = FamilyName {
+                name: name.into(),
+                id: FamilyId::new(),
+            };
+            self.name_map.insert(key.as_bytes().into(), new_name);
+        }
+    }
+
     /// Returns an iterator over all of the font family names.
     pub fn iter(&self) -> impl Iterator<Item = &FamilyName> + Clone {
         self.name_map.values()

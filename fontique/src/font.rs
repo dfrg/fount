@@ -201,7 +201,13 @@ impl FontInfo {
         })
     }
 
-    pub(crate) fn maybe_override_attributes(&mut self, stretch: Stretch, style: Style, weight: Weight) {
+    #[allow(unused)]
+    pub(crate) fn maybe_override_attributes(
+        &mut self,
+        stretch: Stretch,
+        style: Style,
+        weight: Weight,
+    ) {
         if self.stretch == Stretch::default() {
             self.stretch = stretch;
         }

@@ -61,7 +61,7 @@ impl Weight {
 
 #[derive(Default)]
 pub struct CachedFont {
-    pub family: String,
+    pub family: Vec<String>,
     pub path: PathBuf,
     pub index: u32,
     pub stretch: Stretch,
@@ -81,6 +81,7 @@ impl CachedFont {
 
 pub fn parse_caches(paths: &[PathBuf], mut f: impl FnMut(&CachedFont)) {
     let mut buffer = vec![];
+    let mut name_free_list = vec![];
     let mut cached_font = CachedFont::default();
     for path in paths {
         let Ok(dir) = path.canonicalize().and_then(std::fs::read_dir) else {
@@ -103,7 +104,7 @@ pub fn parse_caches(paths: &[PathBuf], mut f: impl FnMut(&CachedFont)) {
             };
             let Ok(fonts) = set.fonts() else { continue };
             for font in fonts.flatten() {
-                if parse_font(&font, &mut cached_font).is_some() {
+                if parse_font(&font, &mut name_free_list, &mut cached_font).is_some() {
                     f(&cached_font);
                 }
             }
@@ -111,7 +112,12 @@ pub fn parse_caches(paths: &[PathBuf], mut f: impl FnMut(&CachedFont)) {
     }
 }
 
-fn parse_font(pattern: &Pattern, font: &mut CachedFont) -> Option<()> {
+fn parse_font(
+    pattern: &Pattern,
+    name_free_list: &mut Vec<String>,
+    font: &mut CachedFont,
+) -> Option<()> {
+    name_free_list.extend(font.family.drain());
     font.clear();
     for elt in pattern.elts().ok()? {
         let Ok(obj) = elt.object() else {
@@ -122,9 +128,10 @@ fn parse_font(pattern: &Pattern, font: &mut CachedFont) -> Option<()> {
                 for val in elt.values().ok()? {
                     let val = val.ok()?;
                     if let Value::String(s) = val {
-                        font.family.clear();
-                        font.family
-                            .push_str(core::str::from_utf8(s.str().ok()?).ok()?);
+                        let mut name = name_free_list.pop().unwrap_or_default();
+                        name.clear();
+                        name.push_str(core::str::from_utf8(s.str().ok()?).ok()?);
+                        font.family.push(name);
                     }
                 }
             }
