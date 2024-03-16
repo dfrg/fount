@@ -54,9 +54,9 @@ impl SystemFonts {
                 let [first_name, other_names @ ..] = names.as_slice() else {
                     continue;
                 };
-                let id = name_map.get_or_insert(&first_name).id();
+                let id = name_map.get_or_insert(first_name).id();
                 for other_name in other_names {
-                    name_map.add_alias(id, &other_name);
+                    name_map.add_alias(id, other_name);
                 }
             }
         }

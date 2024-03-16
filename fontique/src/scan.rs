@@ -75,34 +75,48 @@ fn scan_collection(
 ) -> ScannedCollection {
     let mut collection = ScannedCollection::default();
     let mut families: HashMap<FamilyId, (FamilyName, SmallVec<[FontInfo; 4]>)> = Default::default();
-    let mut family_name = String::default();
     let mut postscript_name = String::default();
+    let mut name_pool = vec![];
+    let mut names = vec![];
     scan_paths(paths, max_depth, |scanned_font| {
         let Some(path) = &scanned_font.path else {
             return;
         };
-        family_name.clear();
+        name_pool.append(&mut names);
         postscript_name.clear();
-        let family_chars = scanned_font
-            .english_or_first_name(NameId::TYPOGRAPHIC_FAMILY_NAME)
-            .or_else(|| scanned_font.english_or_first_name(NameId::FAMILY_NAME))
-            .map(|name| name.chars());
+        if !all_names(
+            &scanned_font.name_table,
+            NameId::TYPOGRAPHIC_FAMILY_NAME,
+            &mut name_pool,
+            &mut names,
+        ) && !all_names(
+            &scanned_font.name_table,
+            NameId::FAMILY_NAME,
+            &mut name_pool,
+            &mut names,
+        ) {
+            return;
+        }
         let postscript_chars = scanned_font
             .english_or_first_name(NameId::POSTSCRIPT_NAME)
             .map(|name| name.chars());
-        match (family_chars, postscript_chars) {
-            (Some(family), Some(postscript)) => {
-                family_name.extend(family);
-                postscript_name.extend(postscript);
-            }
-            _ => return,
+        if let Some(chars) = postscript_chars {
+            postscript_name.extend(chars);
+        } else {
+            return;
         }
         let data = collection.data_paths.get_or_insert(path);
         let Some(font) = FontInfo::from_font_ref(&scanned_font.font, data, scanned_font.index)
         else {
             return;
         };
-        let name = collection.family_names.get_or_insert(&family_name);
+        let [first_name, other_names @ ..] = names.as_slice() else {
+            return;
+        };
+        let name = collection.family_names.get_or_insert(first_name);
+        for other_name in other_names {
+            collection.family_names.add_alias(name.id(), other_name);
+        }
         collection
             .postscript_names
             .insert(postscript_name.clone(), name.id());
@@ -186,6 +200,75 @@ fn scan_font<'a>(
         name_table,
     });
     Some(())
+}
+
+fn all_names(
+    name_table: &name::Name,
+    id: NameId,
+    pool: &mut Vec<String>,
+    result: &mut Vec<String>,
+) -> bool {
+    // Find the "English or first" name first. We'll use that as the default
+    // name.
+    let mut best_index = 0;
+    let mut best_rank = -1;
+    let mut best_record = None;
+    for (i, record) in name_table
+        .name_record()
+        .iter()
+        .enumerate()
+        .filter(|x| x.1.name_id() == id)
+    {
+        let rank = match (i, record.language_id()) {
+            (_, 0x0409) => {
+                best_index = i;
+                best_record = Some(record);
+                break;
+            }
+            (_, 0) => 2,
+            (0, _) => 1,
+            _ => continue,
+        };
+        if rank > best_rank {
+            best_rank = rank;
+            best_index = i;
+            best_record = Some(record);
+        }
+    }
+    // Add the "best" name first
+    if let Some(best) = best_record.and_then(|rec| rec.string(name_table.string_data()).ok()) {
+        let mut str = pool.pop().unwrap_or_default();
+        str.clear();
+        str.extend(best.chars());
+        if !str.is_empty() {
+            result.push(str);
+        } else {
+            pool.push(str);
+        }
+    }
+    // And then the rest
+    for (i, record) in name_table
+        .name_record()
+        .iter()
+        .enumerate()
+        .filter(|x| x.1.name_id() == id)
+    {
+        if best_record.is_some() && i == best_index {
+            continue;
+        }
+        let Ok(name_str) = record.string(name_table.string_data()) else {
+            continue;
+        };
+        let mut str = pool.pop().unwrap_or_default();
+        str.clear();
+        str.extend(name_str.chars());
+        if !str.is_empty() {
+            result.push(str);
+        } else {
+            pool.push(str);
+        }
+    }
+    !result.is_empty()
 }
 
 fn english_or_first<'a>(names: &name::Name<'a>, id: NameId) -> Option<name::NameString<'a>> {

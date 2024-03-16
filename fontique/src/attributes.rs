@@ -10,6 +10,17 @@ pub struct Attributes {
     pub weight: Weight,
 }
 
+impl Attributes {
+    /// Creates new attributes from the given stretch, style and weight.
+    pub fn new(stretch: Stretch, style: Style, weight: Weight) -> Self {
+        Self {
+            stretch,
+            style,
+            weight,
+        }
+    }
+}
+
 impl fmt::Display for Attributes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
